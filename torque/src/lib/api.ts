@@ -1,9 +1,14 @@
 const API_BASE = process.env.NEXT_PUBLIC_TSPOONBASE_URL || 'http://localhost:8090'
 
 export async function fetchNodeTypes(): Promise<any[]> {
-  const res = await fetch(`${API_BASE}/api/agents/nodes`)
-  const json = await res.json()
-  return json.data || []
+  try {
+    const res = await fetch(`${API_BASE}/api/agents/nodes`)
+    if (!res.ok) return []
+    const json = await res.json()
+    return json.data || []
+  } catch {
+    return []
+  }
 }
 
 export async function exportWorkflow(definition: any): Promise<any> {

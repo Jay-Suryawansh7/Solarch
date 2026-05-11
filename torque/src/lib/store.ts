@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { Node, Edge, Connection, addEdge, applyNodeChanges, applyEdgeChanges, NodeChange, EdgeChange } from 'reactflow'
 import { WorkflowNode as TorqueNode, WorkflowEdge as TorqueEdge, NodeDefinition } from '@/types/workflow'
+import { defaultNodes } from './defaultNodes'
 
 export interface WorkflowMeta {
   name: string
@@ -64,13 +65,13 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
   nodes: [],
   edges: [],
   meta: { name: 'Untitled Workflow', description: '', workflowId: `wf_${Date.now().toString(36)}` },
-  nodeTypes: [],
+  nodeTypes: defaultNodes,
   selectedNode: null,
   isRunning: false,
   executionLog: [],
   toast: null,
 
-  setNodeTypes: (types) => set({ nodeTypes: types }),
+  setNodeTypes: (types) => set({ nodeTypes: types && types.length > 0 ? types : defaultNodes }),
 
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) }),
 
@@ -84,7 +85,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       id,
       type: 'workflow',
       position,
-      data: { nodeType: type.type, label: type.label, config: {}, category: type.category, configSchema: type.configSchema, inputs: type.inputs ?? 1, outputs: type.outputs ?? 1 },
+      data: { nodeType: type.type, label: type.label, config: {}, category: type.category, configSchema: type.configSchema, inputs: type.inputs ?? 1, outputs: type.outputs ?? 1, handles: type.handles },
     }
     set({ nodes: [...get().nodes, newNode] })
   },

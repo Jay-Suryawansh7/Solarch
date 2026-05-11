@@ -26,9 +26,26 @@ export interface WorkflowDefinition {
     timeout?: number
     enableLogging?: boolean
     tags?: string[]
+    memory?: MemoryConfig
+    agent?: AgentConfig
   }
   createdAt?: string
   updatedAt?: string
+}
+
+export interface MemoryConfig {
+  type: 'buffer' | 'summary' | 'vector' | 'kv'
+  windowSize?: number
+  sessionKey?: string
+  vectorCollection?: string
+}
+
+export interface AgentConfig {
+  maxIterations?: number
+  model?: string
+  provider?: string
+  systemPrompt?: string
+  tools?: string[]
 }
 
 export interface NodeExecutionResult {
@@ -53,6 +70,7 @@ export interface WorkflowExecutionResult {
   endTime?: string
   duration?: number
   error?: string
+  memory?: any[]
 }
 
 export interface WorkflowRecord {
@@ -88,18 +106,50 @@ export interface ExecutionContext {
   logger: (msg: string, data?: any) => void
   getVariable: (key: string) => any
   setVariable: (key: string, value: any) => void
+  getMemory?: (key: string) => any
+  setMemory?: (key: string, value: any) => void
+  callTool?: (tool: string, args: any) => Promise<any>
+  callSubworkflow?: (id: string, input: any) => Promise<any>
   abortSignal?: AbortSignal
+  app?: any
 }
 
 export interface NodeDefinition {
   type: string
   label: string
   description: string
-  category: 'trigger' | 'ai' | 'data' | 'action' | 'logic' | 'output'
+  category: 'trigger' | 'ai' | 'chain' | 'memory' | 'data' | 'action' | 'logic' | 'output' | 'agent' | 'connector' | 'mcp' | 'skill' | 'database'
   icon?: string
   execute: NodeExecutor
   validate?: (config: Record<string, any>) => string[]
   configSchema?: Record<string, any>
   inputs?: number
   outputs?: number
+}
+
+// Tool system for agent use
+export interface ToolDefinition {
+  name: string
+  description: string
+  schema: Record<string, any>
+  execute: (args: any, ctx: ExecutionContext) => Promise<any>
+}
+
+export type LLMProvider = 'openai' | 'anthropic' | 'ollama' | 'azure' | 'google'
+
+export interface LLMCompleteOptions {
+  provider: LLMProvider
+  model: string
+  messages: Array<{ role: string; content: string }>
+  tools?: any[]
+  temperature?: number
+  maxTokens?: number
+  apiKey?: string
+}
+
+export interface MemoryEntry {
+  role: 'user' | 'assistant' | 'system' | 'tool'
+  content: string
+  timestamp: string
+  metadata?: Record<string, any>
 }

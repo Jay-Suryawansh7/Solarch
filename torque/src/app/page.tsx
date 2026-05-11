@@ -4,11 +4,33 @@ import { useEffect, useCallback, useRef, useState } from 'react'
 import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider, useReactFlow, SelectionMode, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
 
+import { motion, AnimatePresence } from 'framer-motion'
 import WorkflowNodeComponent from '@/components/WorkflowNode'
 import NodePalette from '@/components/NodePalette'
 import ConfigPanel from '@/components/ConfigPanel'
 import { useWorkflowStore } from '@/lib/store'
 import { fetchNodeTypes, exportWorkflow, getExportJson } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
+  Play,
+  Square,
+  Download,
+  Trash2,
+  FileJson,
+  RotateCcw,
+  Terminal,
+  List,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  Info,
+} from 'lucide-react'
 
 const nodeTypes = { workflow: WorkflowNodeComponent }
 
@@ -43,7 +65,7 @@ function Canvas() {
   const [showLogs, setShowLogs] = useState(false)
 
   useEffect(() => {
-    fetchNodeTypes().then(setNodeTypes).catch(() => {})
+    fetchNodeTypes().then(setNodeTypes)
   }, [setNodeTypes])
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -78,7 +100,6 @@ function Canvas() {
       await exportWorkflow(definition)
       showToast('Workflow exported to TspoonBase', 'success')
     } catch {
-      // Show as JSON download fallback
       const blob = new Blob([getExportJson(definition)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -88,32 +109,61 @@ function Canvas() {
     }
   }
 
+  const toastIcon = {
+    success: <CheckCircle2 className="size-4 text-green-400" />,
+    error: <AlertCircle className="size-4 text-red-400" />,
+    info: <Info className="size-4 text-blue-400" />,
+  }
+
   return (
-    <div className="h-screen w-screen flex flex-col" onKeyDown={onKeyDown} tabIndex={0}>
+    <div className="h-screen w-screen flex flex-col bg-background text-foreground" onKeyDown={onKeyDown} tabIndex={0}>
       {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-color)] bg-[var(--bg-secondary)] shrink-0">
+      <header className="flex items-center justify-between px-4 h-11 border-b border-border bg-card shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-bold text-[var(--accent)]">Torque</span>
+          <span className="text-sm font-bold text-primary">Torque</span>
+          <div className="h-4 w-px bg-border" />
           <input
-            className="bg-transparent text-sm text-[var(--text-primary)] outline-none border-b border-transparent hover:border-[var(--border-color)] focus:border-[var(--accent)] px-1 py-0.5"
+            className="bg-transparent text-sm text-foreground outline-none border-b border-transparent hover:border-border focus:border-primary px-1 py-0.5 transition-colors min-w-[140px]"
             value={meta.name}
             onChange={e => setMeta({ name: e.target.value })}
           />
-          <span className="text-[10px] text-[var(--text-muted)]">{nodes.length} nodes, {edges.length} connections</span>
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono text-muted-foreground">
+            {nodes.length}N · {edges.length}E
+          </Badge>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--bg-surface)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-colors"
-            onClick={() => clearCanvas()}
-          >
-            New
-          </button>
-          <button
-            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors"
-            onClick={handleExport}
-          >
-            Export
-          </button>
+        <div className="flex items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={<Button variant="ghost" size="sm" />}
+              onClick={() => clearCanvas()}
+            >
+              <RotateCcw className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>New workflow</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger
+              render={<Button variant="ghost" size="sm" />}
+              onClick={() => setShowLogs(!showLogs)}
+            >
+              <Terminal className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>{showLogs ? 'Hide' : 'Show'} logs</TooltipContent>
+          </Tooltip>
+
+          <div className="h-4 w-px bg-border mx-0.5" />
+
+          <Tooltip>
+            <TooltipTrigger
+              render={<Button variant="default" size="sm" />}
+              onClick={handleExport}
+            >
+              <Download className="size-3.5" />
+              <span className="ml-1.5">Export</span>
+            </TooltipTrigger>
+            <TooltipContent>Export workflow</TooltipContent>
+          </Tooltip>
         </div>
       </header>
 
@@ -135,12 +185,13 @@ function Canvas() {
             deleteKeyCode={['Backspace', 'Delete']}
           >
             <Background color="#1e1e2e" gap={20} size={1} />
-            <Controls />
+            <Controls className="!shadow-lg !shadow-black/30" />
             <MiniMap
               nodeStrokeColor="#6c5ce7"
               nodeColor="#1a1a26"
               nodeBorderRadius={4}
               maskColor="rgba(10,10,15,0.7)"
+              style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}
             />
           </ReactFlow>
         </div>
@@ -148,37 +199,84 @@ function Canvas() {
       </div>
 
       {/* Bottom bar */}
-      <footer className="flex items-center justify-between px-4 py-1.5 border-t border-[var(--border-color)] bg-[var(--bg-secondary)] shrink-0 text-[10px] text-[var(--text-muted)]">
+      <footer className="flex items-center justify-between px-4 h-8 border-t border-border bg-card shrink-0 text-[10px] text-muted-foreground">
         <div className="flex items-center gap-3">
-          <button className="hover:text-[var(--text-primary)] transition-colors" onClick={() => setShowLogs(!showLogs)}>
-            {showLogs ? 'Hide' : 'Show'} Logs
-          </button>
-          {isRunning && <span className="text-[var(--amber)] animate-pulse">Running...</span>}
+          {isRunning && (
+            <span className="flex items-center gap-1.5 text-amber-400">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                <span className="relative inline-flex size-2 rounded-full bg-amber-400" />
+              </span>
+              Running...
+            </span>
+          )}
         </div>
-        <span>TspoonBase Agent Engine v0.9.0</span>
+        <span className="font-mono text-[9px]">TspoonBase Agent Engine v0.9.0</span>
       </footer>
 
       {/* Log panel */}
-      {showLogs && (
-        <div className="h-40 border-t border-[var(--border-color)] bg-[var(--bg-primary)] overflow-y-auto p-3 font-mono text-[11px]">
-          {executionLog.length === 0 && <span className="text-[var(--text-muted)]">No logs yet. Run a workflow to see output.</span>}
-          {executionLog.map((log, i) => (
-            <div key={i} className="text-[var(--text-secondary)] leading-relaxed">{log}</div>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {showLogs && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 160, opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="border-t border-border bg-card overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-4 py-1.5 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Terminal className="size-3 text-muted-foreground" />
+                <span className="text-[11px] font-medium text-muted-foreground">Execution Log</span>
+                <Badge variant="outline" className="text-[9px] px-1 py-0">{executionLog.length}</Badge>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="icon-xs" onClick={clearLogs}>
+                  <Trash2 className="size-3" />
+                </Button>
+                <Button variant="ghost" size="icon-xs" onClick={() => setShowLogs(false)}>
+                  <X className="size-3" />
+                </Button>
+              </div>
+            </div>
+            <div className="h-[calc(160px-37px)] overflow-y-auto p-3 font-mono text-[11px] leading-relaxed">
+              {executionLog.length === 0 ? (
+                <span className="text-muted-foreground/60">No logs yet. Export a workflow to see output.</span>
+              ) : (
+                executionLog.map((log, i) => (
+                  <div key={i} className="text-muted-foreground hover:text-foreground transition-colors">
+                    <span className="text-[9px] text-muted-foreground/40 mr-2">{String(i + 1).padStart(3, '0')}</span>
+                    {log}
+                  </div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Toast */}
-      {toast && (
-        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50 transition-all ${
-          toast.type === 'success' ? 'bg-[var(--green)] text-white' :
-          toast.type === 'error' ? 'bg-[var(--red)] text-white' :
-          'bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-color)]'
-        }`}>
-          {toast.message}
-          <button className="ml-3 opacity-70 hover:opacity-100" onClick={dismissToast}>✕</button>
-        </div>
-      )}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.95 }}
+            transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+            className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg z-50 flex items-center gap-2.5 ${
+              toast.type === 'success' ? 'bg-green-900/80 text-green-100 border border-green-700/50' :
+              toast.type === 'error' ? 'bg-red-900/80 text-red-100 border border-red-700/50' :
+              'bg-card text-foreground border border-border'
+            }`}
+          >
+            {toastIcon[toast.type]}
+            <span>{toast.message}</span>
+            <button className="ml-2 opacity-60 hover:opacity-100 transition-opacity" onClick={dismissToast}>
+              <X className="size-3.5" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
