@@ -5,6 +5,7 @@ const NODE_EXECUTORS: Record<string, string> = {
   email_in: `async (config, input) => input`,
   db_watch: `async (config, input) => input`,
   custom_event: `async (config, input) => input`,
+  chat_trigger: `async (config, input) => ({ message: input, channel: config.channel || 'widget' })`,
 
   llm: `async (config, input) => {
     const apiKey = config.apiKey || process.env.OPENAI_API_KEY
@@ -36,6 +37,83 @@ const NODE_EXECUTORS: Record<string, string> = {
   audio_transcribe: `async (config, input) => input`,
   llm_vision: `async (config, input) => input`,
   llm_tool_use: `async (config, input) => input`,
+  llm_local: `async (config, input) => {
+    const endpoint = config.endpoint || 'http://localhost:11434/v1/chat/completions'
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: config.model || 'llama3',
+        messages: [
+          ...(config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []),
+          { role: 'user', content: typeof input === 'string' ? input : JSON.stringify(input) },
+        ],
+        temperature: config.temperature ?? 0.7,
+        max_tokens: config.maxTokens ?? 2048,
+      }),
+    })
+    if (!res.ok) throw new Error(\`Local LLM error: \${res.status}\`)
+    const json = await res.json()
+    return json.choices?.[0]?.message?.content || json.message?.content || ''
+  }`,
+  llm_azure: `async (config, input) => {
+    const endpoint = config.endpoint
+    const key = config.apiKey || process.env.AZURE_OPENAI_API_KEY
+    if (!endpoint || !key) throw new Error('Azure endpoint and API key required')
+    const url = \`\${endpoint.replace(/\\/+$/, '')}/openai/deployments/\${config.deployment}/chat/completions?api-version=2024-02-01\`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'api-key': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          ...(config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []),
+          { role: 'user', content: typeof input === 'string' ? input : JSON.stringify(input) },
+        ],
+        temperature: config.temperature ?? 0.7,
+        max_tokens: config.maxTokens ?? 2048,
+      }),
+    })
+    if (!res.ok) throw new Error(\`Azure error: \${res.status}\`)
+    const json = await res.json()
+    return json.choices?.[0]?.message?.content || ''
+  }`,
+  llm_google: `async (config, input) => {
+    const key = config.apiKey || process.env.GOOGLE_API_KEY
+    if (!key) throw new Error('Google API key required')
+    const model = config.model || 'gemini-2.0-flash'
+    const res = await fetch(\`https://generativelanguage.googleapis.com/v1beta/models/\${model}:generateContent?key=\${key}\`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: typeof input === 'string' ? input : JSON.stringify(input) }] }],
+        systemInstruction: config.systemPrompt ? { parts: [{ text: config.systemPrompt }] } : undefined,
+        generationConfig: { temperature: config.temperature ?? 0.7, maxOutputTokens: config.maxTokens ?? 2048 },
+      }),
+    })
+    if (!res.ok) throw new Error(\`Gemini error: \${res.status}\`)
+    const json = await res.json()
+    return json.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  }`,
+  llm_groq: `async (config, input) => {
+    const key = config.apiKey || process.env.GROQ_API_KEY
+    if (!key) throw new Error('Groq API key required')
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': \`Bearer \${key}\`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: config.model || 'llama-3.3-70b-versatile',
+        messages: [
+          ...(config.systemPrompt ? [{ role: 'system', content: config.systemPrompt }] : []),
+          { role: 'user', content: typeof input === 'string' ? input : JSON.stringify(input) },
+        ],
+        temperature: config.temperature ?? 0.7,
+        max_tokens: config.maxTokens ?? 4096,
+      }),
+    })
+    if (!res.ok) throw new Error(\`Groq error: \${res.status}\`)
+    const json = await res.json()
+    return json.choices?.[0]?.message?.content || ''
+  }`,
 
   pocketbase_get: `async (config, input) => input`,
   pocketbase_list: `async (config, input) => input`,
@@ -50,6 +128,10 @@ const NODE_EXECUTORS: Record<string, string> = {
   split: `async (config, input) => input`,
   sort: `async (config, input) => input`,
   deduplicate: `async (config, input) => input`,
+  neon_query: `async (config, input) => ({ message: 'Neon query requires @neondatabase/serverless at runtime', config, input })`,
+  mongodb_query: `async (config, input) => ({ message: 'MongoDB query requires mongodb driver at runtime', config, input })`,
+  supabase_query: `async (config, input) => ({ message: 'Supabase query requires @supabase/supabase-js at runtime', config, input })`,
+  firebase_query: `async (config, input) => ({ message: 'Firebase query requires firebase-admin at runtime', config, input })`,
 
   http_request: `async (config, input) => {
     const url = config.url
@@ -73,6 +155,7 @@ const NODE_EXECUTORS: Record<string, string> = {
   file_upload: `async (config, input) => input`,
   webhook_send: `async (config, input) => input`,
   pdf_generate: `async (config, input) => input`,
+  cloudinary_upload: `async (config, input) => ({ message: 'Cloudinary upload requires cloudinary SDK at runtime', config, input })`,
 
   condition: `async (config, input) => {
     const fn = new Function('input', \`return Boolean(\${config.expression})\`)
