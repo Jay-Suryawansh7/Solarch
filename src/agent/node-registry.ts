@@ -21,12 +21,19 @@ export function listNodesByCategory(category: string): NodeDefinition[] {
   return Array.from(registry.values()).filter(n => n.category === category)
 }
 
-// Built-in node types
-
 function makeResult(nodeId: string, nodeType: string, output: any, status: 'success' | 'error' = 'success', error?: string): NodeExecutionResult {
   const start = new Date()
   const end = new Date()
   return { nodeId, nodeType, status, output, error, startTime: start.toISOString(), endTime: end.toISOString(), duration: end.getTime() - start.getTime() }
+}
+
+async function executeSandboxed(code: string, input: any, ctx: ExecutionContext, timeoutMs = 5000): Promise<any> {
+  const fn = new Function('input', 'ctx', 'console', 'setTimeout', 'setInterval', 'require', '__dirname', '__filename', 'process', code)
+  const result = await Promise.race([
+    fn(input, ctx, ctx.logger ? { log: ctx.logger } : console, undefined, undefined, undefined, undefined, undefined, undefined),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Code execution timed out')), timeoutMs)),
+  ])
+  return result
 }
 
 registerNode({
@@ -65,6 +72,7 @@ registerNode({
   description: 'Call an AI language model (OpenAI, Anthropic, Ollama)',
   category: 'ai',
   execute: async (config, input, ctx) => {
+    if (ctx.abortSignal?.aborted) return makeResult(ctx.executionId, 'llm', null, 'error', 'Execution aborted')
     const provider = config.provider || 'openai'
     const model = config.model || 'gpt-4o'
     const systemPrompt = config.systemPrompt || ''
@@ -79,31 +87,37 @@ registerNode({
     if (provider === 'openai') {
       const apiKey = config.apiKey || process.env.OPENAI_API_KEY
       if (!apiKey) return makeResult(ctx.executionId, 'llm', null, 'error', 'OPENAI_API_KEY not configured')
-
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, temperature: config.temperature ?? 0.7, max_tokens: config.maxTokens ?? 2048 }),
-      })
-      if (!res.ok) return makeResult(ctx.executionId, 'llm', null, 'error', `OpenAI error: ${res.status} ${res.statusText}`)
-      const json: any = await res.json()
-      const text = json.choices?.[0]?.message?.content || ''
-      const usage = json.usage || {}
-      return { ...makeResult(ctx.executionId, 'llm', text), tokenUsage: { prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0, total: usage.total_tokens || 0 } }
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 60000)
+      try {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST', signal: controller.signal,
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, messages, temperature: config.temperature ?? 0.7, max_tokens: config.maxTokens ?? 2048 }),
+        })
+        if (!res.ok) return makeResult(ctx.executionId, 'llm', null, 'error', `OpenAI error: ${res.status} ${res.statusText}`)
+        const json: any = await res.json()
+        const text = json.choices?.[0]?.message?.content || ''
+        const usage = json.usage || {}
+        return { ...makeResult(ctx.executionId, 'llm', text), tokenUsage: { prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0, total: usage.total_tokens || 0 } }
+      } finally { clearTimeout(timer) }
     }
 
     if (provider === 'anthropic') {
       const apiKey = config.apiKey || process.env.ANTHROPIC_API_KEY
       if (!apiKey) return makeResult(ctx.executionId, 'llm', null, 'error', 'ANTHROPIC_API_KEY not configured')
-
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: model.replace('claude-', '') || 'claude-sonnet-4-20250514', max_tokens: config.maxTokens ?? 2048, system: systemPrompt || undefined, messages: [{ role: 'user', content: userMessage }] }),
-      })
-      if (!res.ok) return makeResult(ctx.executionId, 'llm', null, 'error', `Anthropic error: ${res.status} ${res.statusText}`)
-      const json: any = await res.json()
-      return makeResult(ctx.executionId, 'llm', json.content?.[0]?.text || '')
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 60000)
+      try {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST', signal: controller.signal,
+          headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+          body: JSON.stringify({ model: model.replace('claude-', '') || 'claude-sonnet-4-20250514', max_tokens: config.maxTokens ?? 2048, system: systemPrompt || undefined, messages: [{ role: 'user', content: userMessage }] }),
+        })
+        if (!res.ok) return makeResult(ctx.executionId, 'llm', null, 'error', `Anthropic error: ${res.status} ${res.statusText}`)
+        const json: any = await res.json()
+        return makeResult(ctx.executionId, 'llm', json.content?.[0]?.text || '')
+      } finally { clearTimeout(timer) }
     }
 
     return makeResult(ctx.executionId, 'llm', null, 'error', `Unsupported provider: ${provider}`)
@@ -123,6 +137,7 @@ registerNode({
   description: 'Make an HTTP request to any URL',
   category: 'action',
   execute: async (config, input, ctx) => {
+    if (ctx.abortSignal?.aborted) return makeResult(ctx.executionId, 'http_request', null, 'error', 'Execution aborted')
     const url = config.url
     if (!url) return makeResult(ctx.executionId, 'http_request', null, 'error', 'URL is required')
 
@@ -131,12 +146,15 @@ registerNode({
     const body = config.body || (method !== 'GET' ? JSON.stringify(input) : undefined)
 
     ctx.logger(`HTTP ${method} ${url}`)
-    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...headers }, body })
-    const text = await res.text()
-    let data: any = text
-    try { data = JSON.parse(text) } catch {}
-
-    return makeResult(ctx.executionId, 'http_request', { status: res.status, data, headers: Object.fromEntries(res.headers.entries()) })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 30000)
+    try {
+      const res = await fetch(url, { method, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(headers as Record<string, string>) }, body: body as string | undefined })
+      const text = await res.text()
+      let data: any = text
+      try { data = JSON.parse(text) } catch {}
+      return makeResult(ctx.executionId, 'http_request', { status: res.status, data, headers: Object.fromEntries(res.headers.entries()) })
+    } finally { clearTimeout(timer) }
   },
   configSchema: {
     url: { type: 'string', required: true },
@@ -147,15 +165,14 @@ registerNode({
 registerNode({
   type: 'code',
   label: 'Execute Code',
-  description: 'Run a JavaScript snippet',
+  description: 'Run a JavaScript snippet (sandboxed, 5s timeout)',
   category: 'action',
   execute: async (config, input, ctx) => {
     const code = config.code
     if (!code) return makeResult(ctx.executionId, 'code', null, 'error', 'No code provided')
-
+    if (ctx.abortSignal?.aborted) return makeResult(ctx.executionId, 'code', null, 'error', 'Execution aborted')
     try {
-      const fn = new Function('input', 'ctx', code)
-      const result = await fn(input, ctx)
+      const result = await executeSandboxed(code, input, ctx, 5000)
       return makeResult(ctx.executionId, 'code', result)
     } catch (err: any) {
       return makeResult(ctx.executionId, 'code', null, 'error', err.message)
@@ -191,7 +208,16 @@ registerNode({
   description: 'Create a record in a TspoonBase collection',
   category: 'data',
   execute: async (config, input, ctx) => {
-    return makeResult(ctx.executionId, 'create_record', { message: 'Record creation requires BaseApp context', input })
+    if (!ctx.app) return makeResult(ctx.executionId, 'create_record', null, 'error', 'App context not available')
+    const collection = config.collection
+    if (!collection) return makeResult(ctx.executionId, 'create_record', null, 'error', 'Collection name is required')
+    try {
+      const data = typeof input === 'object' && input !== null ? input : {}
+      const record = await ctx.app.collection(collection).create(data)
+      return makeResult(ctx.executionId, 'create_record', record)
+    } catch (err: any) {
+      return makeResult(ctx.executionId, 'create_record', null, 'error', err.message)
+    }
   },
 })
 
@@ -201,7 +227,19 @@ registerNode({
   description: 'Query records from a TspoonBase collection',
   category: 'data',
   execute: async (config, input, ctx) => {
-    return makeResult(ctx.executionId, 'query_records', { message: 'Query requires BaseApp context', input })
+    if (!ctx.app) return makeResult(ctx.executionId, 'query_records', null, 'error', 'App context not available')
+    const collection = config.collection
+    if (!collection) return makeResult(ctx.executionId, 'query_records', null, 'error', 'Collection name is required')
+    try {
+      const filter = config.filter || ''
+      const sort = config.sort || '-created'
+      const limit = config.limit || 50
+      const page = config.page || 1
+      const records = await ctx.app.collection(collection).getList(page, limit, { filter, sort })
+      return makeResult(ctx.executionId, 'query_records', records)
+    } catch (err: any) {
+      return makeResult(ctx.executionId, 'query_records', null, 'error', err.message)
+    }
   },
 })
 
@@ -221,8 +259,13 @@ registerNode({
   description: 'Wait for a specified duration',
   category: 'action',
   execute: async (config, input, ctx) => {
-    const ms = parseInt(config.durationMs) || 1000
-    await new Promise(r => setTimeout(r, ms))
+    const ms = Math.min(parseInt(config.durationMs) || 1000, 300000)
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, ms)
+      if (ctx.abortSignal) {
+        ctx.abortSignal.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('Execution aborted')) }, { once: true })
+      }
+    })
     return makeResult(ctx.executionId, 'delay', { waited: ms, input })
   },
   configSchema: {

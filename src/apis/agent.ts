@@ -1,14 +1,18 @@
 import { Router, Request, Response } from 'express'
 import { BaseApp } from '../core/base'
 import { requireSuperuserAuth } from './middlewares_auth'
+import { rateLimitMiddleware } from './middlewares_rate_limit'
 import { listNodes, getNode } from '../agent/node-registry'
 import { WorkflowEngine } from '../agent/workflow-engine'
-import { WorkflowDefinition, WorkflowRecord, ExecutionRecord } from '../agent/types'
+import { WorkflowDefinition } from '../agent/types'
 
 export function registerAgentRoutes(app: BaseApp, router: Router): void {
   const agentRouter = Router()
 
-  // List all registered node types
+  // Apply rate limiting to all agent routes
+  agentRouter.use(rateLimitMiddleware(app))
+
+  // List all registered node types (public)
   agentRouter.get('/nodes', async (_req: Request, res: Response) => {
     try {
       res.json({ code: 200, data: listNodes().map(n => ({
@@ -21,7 +25,7 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // Get a specific node definition
+  // Get a specific node definition (public)
   agentRouter.get('/nodes/:type', async (req: Request, res: Response) => {
     try {
       const node = getNode(req.params.type)
@@ -32,7 +36,7 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // Register a workflow from Torque
+  // Register a workflow from Torque (superuser only)
   agentRouter.post('/workflows/register', requireSuperuserAuth(app), async (req: Request, res: Response) => {
     try {
       const body = req.body as any
@@ -42,10 +46,25 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
         return res.status(400).json({ code: 400, message: 'Missing required fields: workflowId, name, nodes' })
       }
 
+      if (typeof workflowId !== 'string' || workflowId.length > 128) {
+        return res.status(400).json({ code: 400, message: 'workflowId must be a string (max 128 chars)' })
+      }
+
+      if (!Array.isArray(body.nodes)) {
+        return res.status(400).json({ code: 400, message: 'nodes must be an array' })
+      }
+
       for (const node of body.nodes) {
+        if (!node.type || typeof node.type !== 'string') {
+          return res.status(400).json({ code: 400, message: 'Each node must have a valid type' })
+        }
         if (!getNode(node.type)) {
           return res.status(400).json({ code: 400, message: `Unknown node type: "${node.type}"` })
         }
+      }
+
+      if (body.edges && !Array.isArray(body.edges)) {
+        return res.status(400).json({ code: 400, message: 'edges must be an array' })
       }
 
       const db = app.db().getDataDB()
@@ -69,18 +88,18 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // List all registered workflows
+  // List all registered workflows (public, limited fields)
   agentRouter.get('/workflows', async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
-      const rows = db.prepare(`SELECT id, workflowId, name, description, version, enabled, created, updated FROM _agentWorkflows ORDER BY updated DESC`).all() as any[]
+      const rows = db.prepare(`SELECT id, workflowId, name, description, version, enabled, created, updated FROM _agentWorkflows ORDER BY updated DESC LIMIT 100`).all() as any[]
       res.json({ code: 200, data: rows })
     } catch (err: any) {
       res.status(500).json({ code: 500, message: err.message })
     }
   })
 
-  // Get a workflow definition
+  // Get a workflow definition (public)
   agentRouter.get('/workflows/:workflowId', async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
@@ -94,7 +113,7 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // Delete a workflow
+  // Delete a workflow (superuser only)
   agentRouter.delete('/workflows/:workflowId', requireSuperuserAuth(app), async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
@@ -106,8 +125,8 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // Execute a workflow
-  agentRouter.post('/workflows/:workflowId/execute', async (req: Request, res: Response) => {
+  // Execute a workflow (requires auth)
+  agentRouter.post('/workflows/:workflowId/execute', requireSuperuserAuth(app), async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
       const row = db.prepare(`SELECT * FROM _agentWorkflows WHERE workflowId = ?`).get(req.params.workflowId) as any
@@ -120,14 +139,21 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
         ...JSON.parse(row.definition),
       }
 
-      const engine = new WorkflowEngine({ workflow: definition, trigger: 'api', input: req.body?.input })
+      const engine = new WorkflowEngine({
+        workflow: definition,
+        trigger: 'api',
+        input: req.body?.input,
+        app,
+      })
       const result = await engine.execute(req.body?.input)
 
-      // Save execution record
       const executionId = result.executionId
       const now = new Date().toISOString()
       db.prepare(`INSERT INTO _agentExecutions (id, workflowId, status, trigger, input, output, results, duration, error, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(executionId, row.workflowId, result.status, 'api', JSON.stringify(req.body?.input || {}), JSON.stringify(result.results[result.results.length - 1]?.output || null), JSON.stringify(result.results), result.duration || 0, result.error || '', now)
+
+      // Cleanup old execution records (keep last 1000 per workflow)
+      db.prepare(`DELETE FROM _agentExecutions WHERE workflowId = ? AND id NOT IN (SELECT id FROM _agentExecutions WHERE workflowId = ? ORDER BY created DESC LIMIT 1000)`).run(row.workflowId, row.workflowId)
 
       res.json({ code: 200, data: result })
     } catch (err: any) {
@@ -136,7 +162,7 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
   })
 
   // Stream workflow execution (SSE)
-  agentRouter.get('/workflows/:workflowId/execute/stream', async (req: Request, res: Response) => {
+  agentRouter.get('/workflows/:workflowId/execute/stream', requireSuperuserAuth(app), async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
       const row = db.prepare(`SELECT * FROM _agentWorkflows WHERE workflowId = ?`).get(req.params.workflowId) as any
@@ -157,6 +183,7 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
         workflow: definition,
         trigger: 'api',
         input: req.query.input ? JSON.parse(req.query.input as string) : undefined,
+        app,
         logger: (msg, data) => {
           res.write(`data: ${JSON.stringify({ type: 'log', message: msg, data })}\n\n`)
         },

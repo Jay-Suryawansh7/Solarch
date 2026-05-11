@@ -10,6 +10,7 @@ export interface WorkflowEngineOptions {
   logger?: (msg: string, data?: any) => void
   getVariable?: (key: string) => any
   setVariable?: (key: string, value: any) => void
+  app?: any
 }
 
 function defaultLogger(msg: string, data?: any) {
@@ -20,10 +21,14 @@ export class WorkflowEngine {
   private workflow: WorkflowDefinition
   private variables: Map<string, any> = new Map()
   private abortSignal?: AbortSignal
+  private workflowTimeout?: number
+  private app?: any
 
   constructor(options: WorkflowEngineOptions) {
     this.workflow = options.workflow
     this.abortSignal = options.signal
+    this.workflowTimeout = options.timeout || options.workflow.config?.timeout || 120000
+    this.app = options.app
     if (options.getVariable) this.variables.set('_get', options.getVariable)
     if (options.setVariable) this.variables.set('_set', options.setVariable)
   }
@@ -37,53 +42,53 @@ export class WorkflowEngine {
 
     this.logger(`Starting workflow "${this.workflow.name}" (${executionId})`)
 
+    const controller = new AbortController()
+    const engineAbort = this.abortSignal
+    const timeoutTimer = setTimeout(() => {
+      this.logger(`Workflow timed out after ${this.workflowTimeout}ms`)
+      controller.abort()
+    }, this.workflowTimeout)
+
+    if (engineAbort) {
+      engineAbort.addEventListener('abort', () => controller.abort(), { once: true })
+    }
+
     try {
-      // Resolve execution order from edges
       const order = this.resolveExecutionOrder()
 
-      if (order.length === 0 && this.workflow.nodes.length > 0) {
-        // No edges defined — execute all nodes sequentially
-        for (const node of this.workflow.nodes) {
-          if (this.abortSignal?.aborted) throw new Error('Execution aborted')
-          const result = await this.executeNode(node, input, executionId)
-          results.push(result)
-          input = result.output
-        }
-      } else {
-        // Follow the graph
-        let currentInput = input
-        for (const nodeId of order) {
-          if (this.abortSignal?.aborted) throw new Error('Execution aborted')
-          const node = this.workflow.nodes.find(n => n.id === nodeId)
-          if (!node) {
-            results.push({
-              nodeId, nodeType: 'unknown', status: 'error', output: null,
-              error: `Node ${nodeId} not found`,
-              startTime: new Date().toISOString(), endTime: new Date().toISOString(), duration: 0,
-            })
-            continue
-          }
-          const result = await this.executeNode(node, currentInput, executionId)
-          results.push(result)
+      let currentInput = input
+      for (const nodeId of order) {
+        if (controller.signal.aborted) throw new Error('Execution timed out')
 
-          if (node.type === 'condition') {
-            const passed = result.output?.passed
-            // Find the edge from this node — follow the right path
-            const nextEdge = this.workflow.edges.find(e => e.from === nodeId && (!e.condition || e.condition === 'true') === !!passed)
-            currentInput = result.output?.input ?? currentInput
-          } else {
-            currentInput = result.output
-          }
-
-          if (result.status === 'error') break
+        const node = this.workflow.nodes.find(n => n.id === nodeId)
+        if (!node) {
+          results.push({
+            nodeId, nodeType: 'unknown', status: 'error', output: null,
+            error: `Node ${nodeId} not found in workflow definition`,
+            startTime: new Date().toISOString(), endTime: new Date().toISOString(), duration: 0,
+          })
+          continue
         }
+
+        const result = await this.executeNode(node, currentInput, executionId, controller.signal)
+        results.push(result)
+
+        if (node.type === 'condition') {
+          const passed = result.output?.passed
+          const nextEdge = this.workflow.edges.find(e => e.from === nodeId && (!e.condition || e.condition === 'true') === !!passed)
+          currentInput = result.output?.input ?? currentInput
+        } else {
+          currentInput = result.output
+        }
+
+        if (result.status === 'error') break
       }
 
       const endTime = new Date()
       return {
         workflowId: this.workflow.workflowId,
         executionId,
-        status: results.some(r => r.status === 'error') ? 'failed' : 'completed',
+        status: controller.signal.aborted ? 'timeout' : results.some(r => r.status === 'error') ? 'failed' : 'completed',
         trigger: 'manual',
         results,
         startTime: startTime.toISOString(),
@@ -95,7 +100,7 @@ export class WorkflowEngine {
       return {
         workflowId: this.workflow.workflowId,
         executionId,
-        status: err.message === 'Execution aborted' ? 'timeout' : 'failed',
+        status: err.message === 'Execution timed out' ? 'timeout' : 'failed',
         trigger: 'manual',
         results,
         startTime: startTime.toISOString(),
@@ -103,14 +108,16 @@ export class WorkflowEngine {
         duration: endTime.getTime() - startTime.getTime(),
         error: err.message,
       }
+    } finally {
+      clearTimeout(timeoutTimer)
     }
   }
 
   private resolveExecutionOrder(): string[] {
     const { nodes, edges } = this.workflow
-    if (edges.length === 0) return nodes.map(n => n.id)
+    if (!nodes || nodes.length === 0) return []
+    if (!edges || edges.length === 0) return nodes.map(n => n.id)
 
-    // Topological sort
     const inDegree = new Map<string, number>()
     const adjacency = new Map<string, string[]>()
 
@@ -130,8 +137,11 @@ export class WorkflowEngine {
     }
 
     const order: string[] = []
+    const visited = new Set<string>()
     while (queue.length > 0) {
       const nodeId = queue.shift()!
+      if (visited.has(nodeId)) continue
+      visited.add(nodeId)
       order.push(nodeId)
       for (const neighbor of adjacency.get(nodeId) || []) {
         const newDegree = (inDegree.get(neighbor) || 0) - 1
@@ -143,7 +153,7 @@ export class WorkflowEngine {
     return order
   }
 
-  private async executeNode(node: any, input: any, executionId: string): Promise<NodeExecutionResult> {
+  private async executeNode(node: any, input: any, executionId: string, signal?: AbortSignal): Promise<NodeExecutionResult> {
     const nodeDef = getNode(node.type)
     if (!nodeDef) {
       return {
@@ -159,7 +169,8 @@ export class WorkflowEngine {
       logger: this.logger,
       getVariable: (key) => this.variables.get(key) ?? this.variables.get(`_get`)?.(key),
       setVariable: (key, value) => { this.variables.set(key, value); this.variables.get(`_set`)?.(key, value) },
-      abortSignal: this.abortSignal,
+      abortSignal: signal,
+      app: this.app,
     }
 
     try {
