@@ -165,4 +165,122 @@ migrate
     console.log(`Created migration: ${filepath}`)
   })
 
+program
+  .command('init')
+  .description('scaffold a new TspoonBase project')
+  .option('--dir <path>', 'project directory', '.')
+  .action(async (opts) => {
+    const fs = await import('fs')
+    const path = await import('path')
+    const readline = await import('readline')
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    const ask = (q: string): Promise<string> => new Promise(r => rl.question(q, r))
+
+    console.log('\n⚡ TspoonBase Project Initializer\n')
+
+    const name = (await ask('? Project name [my-app]: ')).trim() || 'my-app'
+    const dbType = (await ask('? Database (sqlite / postgres) [sqlite]: ')).trim().toLowerCase() || 'sqlite'
+
+    let dbUrl = ''
+    if (dbType === 'postgres') {
+      dbUrl = (await ask('? PostgreSQL DATABASE_URL: ')).trim()
+      while (!dbUrl) {
+        dbUrl = (await ask('  DATABASE_URL is required for PostgreSQL: ')).trim()
+      }
+    }
+
+    const authProvidersInput = (await ask('? Auth providers (email, google, github, discord) [email]: ')).trim() || 'email'
+    const authProviders = authProvidersInput.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+
+    const useRateLimit = (await ask('? Enable rate limiting (y/n) [y]: ')).trim().toLowerCase()
+    const enableRateLimit = useRateLimit !== 'n'
+
+    const useAi = (await ask('? Enable AI tools (y/n) [n]: ')).trim().toLowerCase()
+    const enableAi = useAi === 'y'
+
+    rl.close()
+
+    const projectDir = path.resolve(opts.dir, name)
+    const dataDir = path.join(projectDir, 'pb_data')
+    const migrationsDir = path.join(projectDir, 'pb_migrations')
+
+    fs.mkdirSync(dataDir, { recursive: true })
+    fs.mkdirSync(migrationsDir, { recursive: true })
+
+    console.log(`\n✔ Created ${name}/`)
+    console.log(`✔ Created pb_data/`)
+    console.log(`✔ Created pb_migrations/`)
+
+    const envVars: string[] = [
+      `# TspoonBase Configuration`,
+      `JWT_SECRET=`,
+      `TSPOONBASE_ENCRYPTION_KEY=`,
+    ]
+
+    if (dbType === 'postgres') {
+      envVars.push(`DATABASE_URL=${dbUrl}`)
+    }
+
+    if (authProviders.includes('google')) envVars.push(`GOOGLE_CLIENT_ID=`)
+    if (authProviders.includes('github')) envVars.push(`GITHUB_CLIENT_ID=`)
+    if (authProviders.includes('discord')) envVars.push(`DISCORD_CLIENT_ID=`)
+
+    fs.writeFileSync(path.join(projectDir, '.env'), envVars.join('\n') + '\n')
+    console.log(`✔ Created .env`)
+
+    const configLines: string[] = [
+      `export default {`,
+      `  port: 8090,`,
+      `  dataDir: './pb_data',`,
+      `  database: { type: '${dbType}'${dbUrl ? `, url: '${dbUrl}'` : ''} },`,
+      `  auth: { providers: [${authProviders.map(p => `'${p}'`).join(', ')}] },`,
+      `  rateLimiting: { enabled: ${enableRateLimit} },`,
+      `  ai: { enabled: ${enableAi} },`,
+      `}`,
+    ]
+    fs.writeFileSync(path.join(projectDir, 'tspoonbase.config.ts'), configLines.join('\n') + '\n')
+    console.log(`✔ Created tspoonbase.config.ts`)
+
+    const migrationTemplate = [
+      `module.exports = {`,
+      `  async up(app) {`,
+      `    // Your first migration`,
+      `  },`,
+      `  async down(app) {`,
+      `    // Rollback`,
+      `  },`,
+      `}`,
+    ]
+    fs.writeFileSync(path.join(projectDir, 'pb_migrations', `001_init.js`), migrationTemplate.join('\n') + '\n')
+    console.log(`✔ Created pb_migrations/001_init.js`)
+
+    if (dbType === 'postgres') {
+      const dc = [
+        `version: "3.8"`,
+        `services:`,
+        `  postgres:`,
+        `    image: postgres:16-alpine`,
+        `    environment:`,
+        `      POSTGRES_DB: ${name}`,
+        `      POSTGRES_USER: tspoonbase`,
+        `      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-change_me}`,
+        `    ports:`,
+        `      - "5432:5432"`,
+        `    volumes:`,
+        `      - pg_data:/var/lib/postgresql/data`,
+        `volumes:`,
+        `  pg_data:`,
+      ]
+      fs.writeFileSync(path.join(projectDir, 'docker-compose.yml'), dc.join('\n') + '\n')
+      console.log(`✔ Created docker-compose.yml`)
+    }
+
+    console.log(`\n⚡ Project "${name}" initialized!\n`)
+    console.log(`  Next steps:`)
+    console.log(`    cd ${name}`)
+    console.log(`    tspoonbase serve --port 8090\n`)
+    process.exit(0)
+  })
+
 program.parse(process.argv)

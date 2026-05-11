@@ -448,6 +448,23 @@ export default defineCollection({
       <DocSection id="changelog" title="Changelog">
         <div className="space-y-6">
           <div className="rounded-lg border border-theme bg-theme-surface p-4">
+            <h3 className="font-heading text-lg font-bold text-theme">v0.8.0</h3>
+            <p className="mt-1 text-xs text-theme-muted">2026-05-01</p>
+            <h4 className="mt-3 text-sm font-semibold text-blue-400">Architecture</h4>
+            <ul className="mt-1 list-inside list-disc space-y-1 text-sm text-theme-secondary">
+              <li>Split filter parser from SQL generator — <code>QueryBuilder</code> interface with <code>SqliteQueryBuilder</code></li>
+              <li>Created <code>DatabaseDriver</code> interface for multi-database support</li>
+              <li>Refactored SQLite into <code>SqliteDriver</code> implementing <code>DatabaseDriver</code></li>
+              <li>Backward compatible — all existing imports and APIs unchanged</li>
+            </ul>
+            <h4 className="mt-3 text-sm font-semibold text-blue-400">Added</h4>
+            <ul className="mt-1 list-inside list-disc space-y-1 text-sm text-theme-secondary">
+              <li><code>tspoonbase init</code> CLI command — interactive project scaffolding</li>
+              <li>Select database, auth providers, rate limiting, AI tools during setup</li>
+              <li>Generates <code>.env</code>, <code>tspoonbase.config.ts</code>, <code>pb_migrations/</code>, and optional <code>docker-compose.yml</code></li>
+            </ul>
+          </div>
+          <div className="rounded-lg border border-theme bg-theme-surface p-4">
             <h3 className="font-heading text-lg font-bold text-theme">v0.7.0</h3>
             <p className="mt-1 text-xs text-theme-muted">2026-05-01</p>
             <h4 className="mt-3 text-sm font-semibold text-green-400">Fixed</h4>
