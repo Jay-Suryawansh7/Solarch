@@ -13,6 +13,7 @@ import { hashPassword, verifyPassword, parseJWT } from '../tools/security/crypto
 import jwt from 'jsonwebtoken'
 import { SettingsEncryption } from './settings_encrypt'
 import path from 'path'
+import { validateIdentifier } from '../utils/sql_safe'
 
 export interface BaseAppConfig {
   isDev: boolean
@@ -298,11 +299,17 @@ export class BaseApp {
         }
       } else if (model instanceof PBRecord) {
         const tableName = `_r_${model.collectionId}`
+        const whitelist = this.getRecordFieldWhitelist(model.collectionId)
         const columns = ['id', 'created', 'updated', 'collectionId', 'collectionName']
         const values: any[] = [model.id, model.created.toISOString(), model.updated.toISOString(), model.collectionId, model.collectionName]
         const placeholders = ['?', '?', '?', '?', '?']
 
         for (const [key, value] of model.entries()) {
+          if (!whitelist.has(key)) {
+            this.logger().warn(`Skipping non-whitelisted field "${key}" in record insert for collection ${model.collectionId}`)
+            continue
+          }
+          validateIdentifier(key, `record field "${key}"`)
           columns.push(key)
           if (typeof value === 'boolean') {
             values.push(value ? 1 : 0)
@@ -340,10 +347,16 @@ export class BaseApp {
         this._collectionCache.set(model.name.toLowerCase(), model)
       } else if (model instanceof PBRecord) {
         const tableName = `_r_${model.collectionId}`
-        const setClauses = ['updated = ?']
+        const whitelist = this.getRecordFieldWhitelist(model.collectionId)
+        const setClauses: string[] = ['updated = ?']
         const values: any[] = [now]
 
         for (const [key, value] of model.entries()) {
+          if (!whitelist.has(key)) {
+            this.logger().warn(`Skipping non-whitelisted field "${key}" in record update for collection ${model.collectionId}`)
+            continue
+          }
+          validateIdentifier(key, `record field "${key}"`)
           setClauses.push(`${key} = ?`)
           if (typeof value === 'boolean') {
             values.push(value ? 1 : 0)
@@ -619,6 +632,27 @@ export class BaseApp {
     return verifyPassword(password, hash)
   }
 
+  getRecordFieldWhitelist(collectionIdOrName: string): Set<string> {
+    const whitelist = new Set<string>(['id', 'created', 'updated', 'collectionId', 'collectionName'])
+    const collection = this.findCachedCollectionByNameOrId(collectionIdOrName)
+    if (collection) {
+      for (const f of collection.fields) {
+        whitelist.add(f.name)
+      }
+      if (collection.isAuth()) {
+        whitelist.add('email')
+        whitelist.add('emailVisibility')
+        whitelist.add('passwordHash')
+        whitelist.add('verified')
+        whitelist.add('lastResetSentAt')
+        whitelist.add('lastVerificationSentAt')
+        whitelist.add('lastLoginAt')
+        whitelist.add('username')
+      }
+    }
+    return whitelist
+  }
+
   generateJWT(payload: { [key: string]: any }, secret: string, expiration: string = '720h'): string {
     if (!secret) {
       throw new Error('JWT_SECRET is required. Configure jwtSecret in settings.')
@@ -630,7 +664,10 @@ export class BaseApp {
     const envSecret = process.env.JWT_SECRET || process.env.TSPOONBASE_JWT_SECRET
     if (envSecret) {
       if (envSecret.length < 32) {
-        this.logger().warn('JWT_SECRET should be at least 32 characters for security!')
+        throw new Error(
+          'JWT_SECRET must be at least 32 characters long for security.\n' +
+          'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+        )
       }
       return envSecret
     }

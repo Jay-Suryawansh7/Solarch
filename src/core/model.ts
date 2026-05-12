@@ -4,6 +4,8 @@ export interface BaseModelData {
   updated: string
 }
 
+import { randomBytes } from 'crypto'
+
 export abstract class BaseModel {
   id: string
   created: Date
@@ -44,10 +46,8 @@ export abstract class BaseModel {
   }
 }
 
-let idCounter = 0
 function generateId(): string {
   const timestamp = Date.now().toString(36)
-  const counter = (idCounter++).toString(36)
-  const random = Math.random().toString(36).slice(2, 8)
-  return `${timestamp}${random}${counter}`
+  const random = randomBytes(4).toString('hex')
+  return `${timestamp}${random}`
 }

@@ -1,6 +1,7 @@
 import { RecordModel as PBRecord } from '../core/record'
 import { Collection } from '../core/collection'
 import { BaseApp } from '../core/base'
+import { validateIdentifier } from '../utils/sql_safe'
 
 export interface RequestInfo {
   auth: PBRecord | null
@@ -211,6 +212,12 @@ export class RecordFieldResolver {
       const relationFieldName = backRelMatch[2]
       const targetCollection = this.app.findCachedCollectionByNameOrId(targetCollectionName)
       if (targetCollection) {
+        // Validate that relationFieldName is a real field in the target collection
+        const targetField = targetCollection.fields.find(f => f.name === relationFieldName)
+        if (!targetField || targetField.type !== 'relation') {
+          return []
+        }
+        validateIdentifier(relationFieldName, `back-relation field "${relationFieldName}"`)
         try {
           const db = this.app.db().getDataDB()
           const tableName = `_r_${targetCollection.id}`

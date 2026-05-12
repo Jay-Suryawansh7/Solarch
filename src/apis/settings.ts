@@ -5,6 +5,23 @@ import { SettingsEncryption } from '../core/settings_encrypt'
 import { Mailer } from '../tools/mailer/mailer'
 import { EmailTemplateEngine, sendVerificationEmail } from '../tools/mailer/templates'
 
+const SETTINGS_WRITABLE_KEYS = new Set([
+  'appName', 'appNameVisible', 'appURL', 'jwtSecret', 'hideControls',
+  'senderName', 'senderAddress', 'metaTitle', 'metaDescription', 'metaKeywords',
+  'metaImageURL', 'metaRobots', 'logsMaxDays', 'backups', 'smtp', 's3',
+  'tokenAuth', 'rateLimits', 'batch', 'ai',
+])
+
+function pickSettingsKeys(body: Record<string, any>): Record<string, any> {
+  const picked: Record<string, any> = {}
+  for (const key of Object.keys(body)) {
+    if (SETTINGS_WRITABLE_KEYS.has(key)) {
+      picked[key] = body[key]
+    }
+  }
+  return picked
+}
+
 export function registerSettingsRoutes(app: BaseApp, router: Router): void {
   const settingsRouter = Router()
   const encryption = new SettingsEncryption(app)
@@ -20,7 +37,8 @@ export function registerSettingsRoutes(app: BaseApp, router: Router): void {
 
   settingsRouter.patch('/', requireSuperuserAuth(app), async (req: Request, res: Response) => {
     try {
-      let settings = { ...app.settings(), ...req.body }
+      const picked = pickSettingsKeys(req.body)
+      let settings = { ...app.settings(), ...picked as any }
 
       // Encrypt sensitive fields before saving
       settings = encryption.encryptSettings(settings)

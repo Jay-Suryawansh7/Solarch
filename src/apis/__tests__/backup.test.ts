@@ -22,6 +22,16 @@ async function createTestApp(): Promise<{ server: http.Server; dataDir: string; 
   ep.use(express.json())
   ep.use(express.urlencoded({ extended: true }))
 
+  // Mock admin auth context for testing (can be bypassed with X-Bypass-Auth header)
+  ep.use((req: any, _res: any, next: any) => {
+    if (req.headers['x-bypass-auth'] === 'true') {
+      req.authContext = { record: null, isAdmin: false, token: null }
+    } else {
+      req.authContext = { record: null, isAdmin: true, token: 'test-admin-token' }
+    }
+    next()
+  })
+
   await app.bootstrap()
   await app.migrate()
 
@@ -175,7 +185,16 @@ describe('Health endpoint', () => {
     fs.rmSync(ctx.dataDir, { recursive: true, force: true })
   })
 
-  it('GET /api/health returns healthy', async () => {
+  it('GET /api/health returns ok for non-admin', async () => {
+    const res = await fetch(`${ctx.url}/api/health`, {
+      headers: { 'X-Bypass-Auth': 'true' },
+    })
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.status).toBe('ok')
+  })
+
+  it('GET /api/health returns details for admin', async () => {
     const { status, body } = await fetchJson(`${ctx.url}/api/health`)
     expect(status).toBe(200)
     expect(body.message).toBe('Healthy')

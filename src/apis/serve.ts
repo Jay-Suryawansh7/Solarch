@@ -36,9 +36,29 @@ export async function serve(app: BaseApp, port: number): Promise<http.Server> {
 
   const server = express()
 
-  server.use(helmet({ contentSecurityPolicy: false }))
+  server.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
+  }))
   server.use(corsMiddleware())
-  server.use(require('morgan')('dev'))
+  server.use(require('morgan')(':method :url :status :res[content-length] - :response-time ms'))
+
+  // Additional security headers
+  server.use((req, res, next) => {
+    res.setHeader('X-Frame-Options', 'DENY')
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains')
+    next()
+  })
+
   server.use(express.json({ limit: '50mb' }))
   server.use(express.urlencoded({ extended: true, limit: '50mb' }))
   // server.use(gzipMiddleware())
@@ -174,10 +194,10 @@ export async function serve(app: BaseApp, port: number): Promise<http.Server> {
   const httpServer = http.createServer(server)
 
   const wss = new WebSocketServer({ noServer: true })
-  setupWebSocketRealtime(wss)
+  setupWebSocketRealtime(wss, app)
 
   httpServer.on('upgrade', (request, socket, head) => {
-    if (request.url === '/api/realtime') {
+    if (request.url?.startsWith('/api/realtime')) {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request)
       })

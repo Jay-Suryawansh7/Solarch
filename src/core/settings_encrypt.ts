@@ -68,7 +68,13 @@ export class SettingsEncryption {
   }
 
   private getSecret(): string {
-    return this.app.encryptionEnv || this.app.settings().appName || 'tspoonbase-secret'
+    if (!this.app.encryptionEnv || this.app.encryptionEnv.length < 16) {
+      throw new Error(
+        'SETTINGS_ENCRYPTION_KEY is required (min 16 characters). ' +
+        'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+      )
+    }
+    return this.app.encryptionEnv
   }
 
   encrypt(value: string): string {

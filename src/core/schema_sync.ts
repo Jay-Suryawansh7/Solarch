@@ -1,6 +1,7 @@
 import { BaseApp } from './base'
 import { Collection } from './collection'
 import { Field } from './field'
+import { validateIdentifier } from '../utils/sql_safe'
 
 export interface SchemaSyncResult {
   changed: boolean
@@ -123,7 +124,8 @@ async function syncViewCollection(app: BaseApp, collection: Collection): Promise
     }
 
     try {
-      db.exec(`CREATE VIEW ${viewName} AS ${query}`)
+      const safeViewName = validateIdentifier(viewName, 'view name')
+      db.exec(`CREATE VIEW ${safeViewName} AS ${query}`)
     } catch (err: any) {
       app.logger().error(`Failed to create view ${viewName}`, err.message)
     }
@@ -217,15 +219,26 @@ async function syncIndexes(app: BaseApp, collection: Collection): Promise<void> 
     const indexName = `idx_${collection.id}_${createHash('md5').update(indexDef).digest('hex').slice(0, 8)}`
     if (!existingIndexNames.has(indexName)) {
       try {
-        // Simple index parsing - expect format like "CREATE INDEX ..." or "field1, field2"
-        if (indexDef.toUpperCase().startsWith('CREATE')) {
-          db.exec(indexDef)
-        } else {
-          const fields = indexDef.split(',').map(f => f.trim()).join(', ')
-          db.exec(`CREATE INDEX IF NOT EXISTS ${indexName} ON ${tableName} (${fields})`)
+        // Only support field-list format: "field1, field2" or "field1 DESC, field2 ASC"
+        // Raw CREATE INDEX strings are rejected to prevent SQL injection
+        const fields = indexDef.split(',').map(f => f.trim()).filter(Boolean)
+        if (fields.length === 0) {
+          app.logger().error(`Invalid empty index definition for ${tableName}`, indexDef)
+          continue
         }
+        const validatedFields = fields.map(f => {
+          const parts = f.split(/\s+/)
+          const fieldName = parts[0]
+          const direction = parts.length > 1 ? parts[1].toUpperCase() : ''
+          if (direction && !['ASC', 'DESC'].includes(direction)) {
+            throw new Error(`Invalid sort direction "${direction}" in index field "${f}"`)
+          }
+          validateIdentifier(fieldName, 'index field name')
+          return direction ? `${fieldName} ${direction}` : fieldName
+        })
+        db.exec(`CREATE INDEX IF NOT EXISTS ${indexName} ON ${tableName} (${validatedFields.join(', ')})`)
       } catch (err: any) {
-        app.logger().error(`Failed to create index ${indexName}`, err.message)
+        app.logger().error(`Failed to create index ${indexName}: ${err.message}`)
       }
     }
   }

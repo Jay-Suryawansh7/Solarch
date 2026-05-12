@@ -1,6 +1,7 @@
 import { BaseApp } from './base'
 import { RecordModel as PBRecord } from './record'
 import { MFA, OTP, AuthOrigin, ExternalAuth } from './auth_models'
+import { validateIdentifier } from '../utils/sql_safe'
 
 export async function findAllMFAsByRecord(app: BaseApp, record: PBRecord): Promise<MFA[]> {
   const db = app.db().getDataDB()
@@ -137,10 +138,15 @@ export async function findAllExternalAuthsByCollection(app: BaseApp, collectionI
   return rows.map(row => new ExternalAuth(row))
 }
 
+const EXTERNAL_AUTH_FIELDS = new Set(['id', 'recordRef', 'collectionId', 'provider', 'providerId', 'created', 'updated', 'providerId'])
+
 export async function findFirstExternalAuthByExpr(
   app: BaseApp,
   expression: { field: string; value: any }
 ): Promise<ExternalAuth | null> {
+  if (!EXTERNAL_AUTH_FIELDS.has(expression.field)) {
+    throw new Error(`Invalid field name for external auth query: "${expression.field}"`)
+  }
   const db = app.db().getDataDB()
   const row = db.prepare(
     `SELECT * FROM _externalAuths WHERE ${expression.field} = ? ORDER BY created DESC LIMIT 1`

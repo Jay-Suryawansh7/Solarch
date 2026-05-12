@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { BaseApp } from '../core/base'
-import { requireSuperuserAuth } from './middlewares_auth'
+import { requireSuperuserAuth, requireAuth } from './middlewares_auth'
 import { rateLimitMiddleware } from './middlewares_rate_limit'
 import { listNodes, getNode } from '../agent/node-registry'
 import { WorkflowEngine } from '../agent/workflow-engine'
@@ -88,8 +88,8 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // List all registered workflows (public, limited fields)
-  agentRouter.get('/workflows', async (req: Request, res: Response) => {
+  // List all registered workflows (auth required)
+  agentRouter.get('/workflows', requireAuth(app), async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
       const rows = db.prepare(`SELECT id, workflowId, name, description, version, enabled, created, updated FROM _agentWorkflows ORDER BY updated DESC LIMIT 100`).all() as any[]
@@ -99,14 +99,34 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // Get a workflow definition (public)
-  agentRouter.get('/workflows/:workflowId', async (req: Request, res: Response) => {
+  // Get a workflow definition (auth required, secrets scrubbed)
+  agentRouter.get('/workflows/:workflowId', requireAuth(app), async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
       const row = db.prepare(`SELECT * FROM _agentWorkflows WHERE workflowId = ?`).get(req.params.workflowId) as any
       if (!row) return res.status(404).json({ code: 404, message: 'Workflow not found' })
 
       const definition = JSON.parse(row.definition)
+      // Scrub API keys and secrets from node configs
+      if (definition.nodes) {
+        const secretKeys = new Set(['apiKey', 'api_key', 'password', 'secret', 'token', 'authorization', 'auth'])
+        for (const node of definition.nodes) {
+          if (node.config) {
+            for (const key of Object.keys(node.config)) {
+              if (secretKeys.has(key)) {
+                node.config[key] = '***'
+              }
+            }
+          }
+        }
+      }
+      if (definition.config) {
+        const scrubbedConfig: Record<string, any> = {}
+        for (const [key, value] of Object.entries(definition.config)) {
+          scrubbedConfig[key] = ['apiKey', 'api_key', 'secret', 'token', 'password'].includes(key) ? '***' : value
+        }
+        definition.config = scrubbedConfig
+      }
       res.json({ code: 200, data: { id: row.id, workflowId: row.workflowId, name: row.name, description: row.description, version: row.version, enabled: row.enabled, created: row.created, updated: row.updated, nodes: definition.nodes, edges: definition.edges, config: definition.config } })
     } catch (err: any) {
       res.status(500).json({ code: 500, message: err.message })
@@ -198,8 +218,8 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // List execution history for a workflow
-  agentRouter.get('/workflows/:workflowId/executions', async (req: Request, res: Response) => {
+  // List execution history for a workflow (auth required)
+  agentRouter.get('/workflows/:workflowId/executions', requireAuth(app), async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
       const rows = db.prepare(`SELECT id, workflowId, status, trigger, duration, error, created FROM _agentExecutions WHERE workflowId = ? ORDER BY created DESC LIMIT 50`).all(req.params.workflowId) as any[]
@@ -209,8 +229,8 @@ export function registerAgentRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // Get a single execution detail
-  agentRouter.get('/executions/:executionId', async (req: Request, res: Response) => {
+  // Get a single execution detail (auth required)
+  agentRouter.get('/executions/:executionId', requireAuth(app), async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
       const row = db.prepare(`SELECT * FROM _agentExecutions WHERE id = ?`).get(req.params.executionId) as any

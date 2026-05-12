@@ -1,4 +1,7 @@
 import { FilterAST } from './filter'
+import { validateIdentifier } from '../../utils/sql_safe'
+
+const VALID_DIRECTIONS = new Set(['ASC', 'DESC'])
 
 export interface QueryBuilder {
   buildWhere(ast: FilterAST, paramOffset?: number): { where: string; params: any[] }
@@ -97,22 +100,25 @@ export class SqliteQueryBuilder implements QueryBuilder {
 
     const parts = sort.split(',').map(s => {
       const trimmed = s.trim()
+      let field: string
+      let direction = 'ASC'
       if (trimmed.startsWith('-')) {
-        return `${this.escapeField(trimmed.slice(1))} DESC`
+        field = trimmed.slice(1)
+        direction = 'DESC'
+      } else if (trimmed.startsWith('+')) {
+        field = trimmed.slice(1)
+      } else {
+        field = trimmed
       }
-      if (trimmed.startsWith('+')) {
-        return `${this.escapeField(trimmed.slice(1))} ASC`
-      }
-      return `${this.escapeField(trimmed)} ASC`
+      validateIdentifier(field, `sort field "${field}"`)
+      return `${field} ${direction}`
     })
 
     return parts.join(', ')
   }
 
   escapeField(field: string): string {
-    if (!/^[a-zA-Z0-9_\.\@\:\*]+$/.test(field)) {
-      return '"invalid"'
-    }
+    validateIdentifier(field, `query field "${field}"`)
     return field
   }
 }

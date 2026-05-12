@@ -7,6 +7,7 @@ import { requireSuperuserAuth } from './middlewares_auth'
 import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
+import fsPromises from 'fs/promises'
 import { createHash } from 'crypto'
 import { Readable } from 'stream'
 
@@ -25,12 +26,44 @@ const ALLOWED_FILE_TYPES = [
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
-const fileFilter = (req: Express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  if (ALLOWED_FILE_TYPES.includes(file.mimetype)) {
-    cb(null, true)
-  } else {
-    cb(new Error(`File type not allowed. Allowed types: ${ALLOWED_FILE_TYPES.join(', ')}`))
+// Magic bytes for common MIME types (first bytes of file)
+const MAGIC_BYTES: Record<string, string[]> = {
+  'image/jpeg': ['ffd8ffe0', 'ffd8ffe1', 'ffd8ffe2', 'ffd8ffee', 'ffd8ffdb'],
+  'image/png': ['89504e47'],
+  'image/gif': ['47494638'],
+  'image/webp': ['52494646'],
+  'application/pdf': ['25504446'],
+  'application/zip': ['504b0304', '504b0506', '504b0708'],
+}
+
+function detectMimeType(buffer: Buffer): string {
+  const hex = buffer.toString('hex', 0, Math.min(buffer.length, 12)).toLowerCase()
+  for (const [mime, signatures] of Object.entries(MAGIC_BYTES)) {
+    for (const sig of signatures) {
+      if (hex.startsWith(sig.toLowerCase())) return mime
+    }
   }
+  const textSample = buffer.toString('utf8', 0, Math.min(buffer.length, 512))
+  if (/^[\x20-\x7E\r\n\t]+$/.test(textSample)) return 'text/plain'
+  return 'application/octet-stream'
+}
+
+function assertPathSafe(targetPath: string, baseDir: string): void {
+  const resolved = path.resolve(targetPath)
+  const base = path.resolve(baseDir)
+  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+    throw new Error('Path traversal detected')
+  }
+}
+
+const fileFilter = (req: Express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  // Validate by extension as an initial filter
+  const ext = path.extname(file.originalname).toLowerCase()
+  const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.txt', '.csv', '.json', '.zip']
+  if (!allowedExts.includes(ext)) {
+    return cb(new Error(`File extension not allowed: ${ext}`))
+  }
+  cb(null, true)
 }
 
 const upload = multer({ 
@@ -130,7 +163,7 @@ export function registerFileRoutes(app: BaseApp, router: Router): void {
 
       const fsys = app.getFilesystem()
       const storageBase = path.join(app.dataDir, 'storage', collection.name, recordId)
-      fs.mkdirSync(storageBase, { recursive: true })
+      await fsPromises.mkdir(storageBase, { recursive: true })
 
       const savedFiles: string[] = []
       const thumbsGenerated: string[] = []
@@ -143,9 +176,17 @@ export function registerFileRoutes(app: BaseApp, router: Router): void {
         const destPath = path.join(storageBase, safeName)
         const storageKey = path.join(safeCollection, recordId, safeName)
 
-        const fileContent = fs.readFileSync(file.path)
+        assertPathSafe(destPath, storageBase)
+
+        const fileContent = await fsPromises.readFile(file.path)
+        // Detect actual MIME type from magic bytes
+        const detectedMime = detectMimeType(fileContent)
+        if (!ALLOWED_FILE_TYPES.includes(detectedMime) && detectedMime !== 'application/octet-stream') {
+          await fsPromises.unlink(file.path)
+          return res.status(400).json({ code: 400, message: `File content type not allowed: ${detectedMime}` })
+        }
         await fsys.putFile(storageKey, fileContent)
-        fs.unlinkSync(file.path)
+        await fsPromises.unlink(file.path)
         savedFiles.push(safeName)
 
         // Generate thumbnails for image files
@@ -243,14 +284,24 @@ export function registerFileRoutes(app: BaseApp, router: Router): void {
         const stream = await fsys.getFile(storageKey) as Readable
         stream.pipe(res)
       } else {
+        const storageBase = path.join(app.dataDir, 'storage', collection.name, recordId)
         let filePath: string
         if (thumb) {
-          filePath = path.join(app.dataDir, 'storage', collection.name, recordId, `${path.basename(filename, path.extname(filename))}_${thumb}${path.extname(filename)}`)
+          filePath = path.join(storageBase, `${path.basename(filename, path.extname(filename))}_${thumb}${path.extname(filename)}`)
         } else {
-          filePath = path.join(app.dataDir, 'storage', collection.name, recordId, filename)
+          filePath = path.join(storageBase, filename)
         }
 
-        if (!fs.existsSync(filePath)) {
+        assertPathSafe(filePath, storageBase)
+
+        let exists: boolean
+        try {
+          await fsPromises.access(filePath)
+          exists = true
+        } catch {
+          exists = false
+        }
+        if (!exists) {
           return res.status(404).json({ code: 404, message: 'File not found.' })
         }
 
@@ -284,20 +335,27 @@ export function registerFileRoutes(app: BaseApp, router: Router): void {
       const storageBase = path.join(app.dataDir, 'storage', collection.name, recordId)
       const filePath = path.join(storageBase, filename)
 
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath)
+      assertPathSafe(filePath, storageBase)
+
+      try {
+        await fsPromises.unlink(filePath)
+      } catch {
+        // file may not exist
       }
       await fsys.deleteFile(path.join(collection.name, recordId, filename)).catch(() => {})
 
       // Delete associated thumbnails
       const baseName = path.basename(filename, path.extname(filename))
       const ext = path.extname(filename)
-      if (fs.existsSync(storageBase)) {
-        const thumbs = fs.readdirSync(storageBase).filter(f => f.startsWith(`${baseName}_thumb`))
+      try {
+        const entries = await fsPromises.readdir(storageBase)
+        const thumbs = entries.filter(f => f.startsWith(`${baseName}_thumb`))
         for (const thumb of thumbs) {
-          fs.unlinkSync(path.join(storageBase, thumb))
+          await fsPromises.unlink(path.join(storageBase, thumb)).catch(() => {})
           await fsys.deleteFile(path.join(collection.name, recordId, thumb)).catch(() => {})
         }
+      } catch {
+        // storage directory may not exist
       }
 
       // Update record

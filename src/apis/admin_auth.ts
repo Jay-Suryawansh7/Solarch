@@ -3,9 +3,45 @@ import { BaseApp } from '../core/base'
 import { verifyPassword, generateJWT, hashPassword as hashPasswordAsync } from '../tools/security/crypto'
 import { Mailer } from '../tools/mailer/mailer'
 import { EmailTemplateEngine, sendPasswordResetEmail } from '../tools/mailer/templates'
+import rateLimit from 'express-rate-limit'
+
+const adminAuthRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request): string => {
+    return req.body?.identity || req.ip || 'unknown'
+  },
+  message: { code: 429, message: 'Too many authentication attempts, please try again later.' },
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({
+      code: 429,
+      message: 'Too many authentication attempts, please try again later.',
+      data: { retryAfter: 900 },
+    })
+  },
+})
+
+const adminResetRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request): string => {
+    return req.body?.email || req.ip || 'unknown'
+  },
+  message: { code: 429, message: 'Too many password reset requests, please try again later.' },
+  handler: (req: Request, res: Response) => {
+    res.status(429).json({
+      code: 429,
+      message: 'Too many password reset requests, please try again later.',
+    })
+  },
+})
 
 export function registerAdminAuthRoutes(app: BaseApp, router: Router): void {
-  router.post('/api/admins/auth-with-password', async (req: Request, res: Response) => {
+  router.post('/api/admins/auth-with-password', adminAuthRateLimiter, async (req: Request, res: Response) => {
     try {
       const { identity, password } = req.body
       if (!identity || !password) {
@@ -15,7 +51,7 @@ export function registerAdminAuthRoutes(app: BaseApp, router: Router): void {
       const db = app.db().getDataDB()
       const hasTable = db.prepare(`SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='_superusers'`).get() as { count: number }
       if (hasTable.count === 0) {
-        return res.status(400).json({ code: 400, message: 'No superusers found.' })
+        return res.status(400).json({ code: 400, message: 'Invalid credentials.' })
       }
 
       const row = db.prepare(`SELECT * FROM _superusers WHERE email = ?`).get(identity) as any
@@ -79,7 +115,7 @@ export function registerAdminAuthRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  router.post('/api/admins/request-password-reset', async (req: Request, res: Response) => {
+  router.post('/api/admins/request-password-reset', adminResetRateLimiter, async (req: Request, res: Response) => {
     try {
       const { email } = req.body
       if (!email) {

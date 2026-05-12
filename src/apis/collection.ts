@@ -4,6 +4,22 @@ import { Collection } from '../core/collection'
 import { syncRecordTableSchema, createRecordTable } from '../core/schema_sync'
 import { requireSuperuserAuth } from './middlewares_auth'
 
+const COLLECTION_WRITABLE_FIELDS = new Set([
+  'name', 'type', 'system', 'listRule', 'viewRule', 'createRule', 'updateRule',
+  'deleteRule', 'fields', 'indexes', 'authOptions', 'viewOptions',
+])
+
+function pickCollectionFields(data: Record<string, any>): Record<string, any> {
+  const picked: Record<string, any> = {}
+  for (const key of Object.keys(data)) {
+    if (!COLLECTION_WRITABLE_FIELDS.has(key)) {
+      continue
+    }
+    picked[key] = data[key]
+  }
+  return picked
+}
+
 export function registerCollectionRoutes(app: BaseApp, router: Router): void {
   const collectionRouter = Router()
 
@@ -55,7 +71,8 @@ export function registerCollectionRoutes(app: BaseApp, router: Router): void {
         return res.status(404).json({ code: 404, message: 'Collection not found.' })
       }
 
-      Object.assign(collection, req.body)
+      const picked = pickCollectionFields(req.body)
+      Object.assign(collection, picked)
       await app.save(collection)
 
       // Sync schema after update
@@ -88,7 +105,7 @@ export function registerCollectionRoutes(app: BaseApp, router: Router): void {
       for (const colData of collections) {
         const existing = await app.findCollectionByNameOrId(colData.name)
         if (existing) {
-          Object.assign(existing, colData)
+          Object.assign(existing, pickCollectionFields(colData))
           await app.save(existing)
           await syncRecordTableSchema(app, existing)
           imported.push(existing.id)
@@ -106,7 +123,7 @@ export function registerCollectionRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  collectionRouter.post('/export', async (req: Request, res: Response) => {
+  collectionRouter.post('/export', requireSuperuserAuth(app), async (req: Request, res: Response) => {
     try {
       const collections = await app.findAllCollections()
       res.json(collections.map(c => c.toJSON()))

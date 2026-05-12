@@ -218,6 +218,19 @@ async function routeBatchRequest(app: BaseApp, req: any, res: any, path: string)
 
       case 'POST': {
         requestInfo.context = 'create'
+        // Enforce createRule
+        if (collection.createRule === null) {
+          res.status(403).json({ code: 403, message: 'Access denied.' })
+          return true
+        }
+        if (collection.createRule !== '') {
+          const dummyRecord = new RecordModel(collection.id, collection.name, req.body)
+          const accessible = await canAccessRecord(app, dummyRecord, collection, collection.createRule, requestInfo)
+          if (!accessible) {
+            res.status(403).json({ code: 403, message: 'Access denied.' })
+            return true
+          }
+        }
         const data: any = { collectionId: collection.id, collectionName: collection.name }
         for (const [key, value] of Object.entries(req.body)) {
           if (!['password', 'passwordConfirm', 'oldPassword', 'newPassword', 'newPasswordConfirm'].includes(key)) {

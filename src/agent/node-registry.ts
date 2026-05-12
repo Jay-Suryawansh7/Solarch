@@ -1,4 +1,5 @@
 import { NodeDefinition, NodeExecutionResult, ExecutionContext } from './types'
+import vm from 'vm'
 
 const registry = new Map<string, NodeDefinition>()
 
@@ -27,15 +28,27 @@ function makeResult(nodeId: string, nodeType: string, output: any, status: 'succ
   return { nodeId, nodeType, status, output, error, startTime: start.toISOString(), endTime: end.toISOString(), duration: end.getTime() - start.getTime() }
 }
 
+// FIXED[H-11]: Replaced new Function with vm.Script sandbox.
+// DEFERRED: Full dynamic code execution remains a product requirement for the 'code' node type.
+// The vm sandbox prevents access to process, require, and the file system but is not a true security boundary.
 async function executeSandboxed(code: string, input: any, ctx: ExecutionContext, timeoutMs = 5000): Promise<any> {
-  // Strip dangerous statements before execution
-  const blocked = ['process', 'require', '__dirname', '__filename', 'global', 'import(', 'eval(', 'constructor']
+  const blocked = ['process', 'require', '__dirname', '__filename', 'global', 'import(', 'eval(', 'constructor', 'prototype', '__proto__']
   const hasBlocked = blocked.some(b => code.includes(b))
   if (hasBlocked) throw new Error('Code contains blocked identifiers: process, require, import, eval, constructor, __dirname, __filename, global')
 
-  const fn = new Function('input', 'ctx', 'console', code)
+  const sandbox = {
+    input,
+    ctx: { executionId: ctx.executionId, logger: ctx.logger, abortSignal: ctx.abortSignal },
+    console: ctx.logger ? { log: ctx.logger } : console,
+    setTimeout: setTimeout,
+    clearTimeout: clearTimeout,
+    Math, Date, JSON, Array, Object, String, Number, Boolean, RegExp, Map, Set, Promise, Error, parseInt, parseFloat, isNaN, isFinite,
+  }
+
+  const script = new vm.Script(`"use strict"; (function() { ${code} })()`)
+  const context = vm.createContext(sandbox)
   const result = await Promise.race([
-    fn(input, ctx, ctx.logger ? { log: ctx.logger } : console),
+    script.runInContext(context, { timeout: timeoutMs, breakOnSigint: true }),
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Code execution timed out')), timeoutMs)),
   ])
   return result
@@ -201,8 +214,10 @@ registerNode({
       return makeResult(ctx.executionId, 'condition', { passed: false, input }, 'error', 'Expression contains blocked keywords')
     }
     try {
-      const fn = new Function('input', `return Boolean(${expression})`)
-      const passed = fn(input)
+      const sandbox = { input, Boolean }
+      const script = new vm.Script(`Boolean(${expression})`)
+      const context = vm.createContext(sandbox)
+      const passed = script.runInContext(context, { timeout: 3000 })
       return makeResult(ctx.executionId, 'condition', { passed, input })
     } catch (err: any) {
       return makeResult(ctx.executionId, 'condition', { passed: false, input }, 'error', err.message)

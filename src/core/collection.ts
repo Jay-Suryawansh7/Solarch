@@ -1,5 +1,6 @@
 import { BaseModel } from './model'
 import { Field, fieldFromJSON } from './field'
+import { validateIdentifier } from '../utils/sql_safe'
 
 export type CollectionType = 'base' | 'auth' | 'view'
 
@@ -55,6 +56,7 @@ export class Collection extends BaseModel {
   constructor(data: CollectionData) {
     super(data)
     this.name = data.name
+    validateIdentifier(this.name, 'collection name')
     this.type = data.type
     this.system = data.system ?? false
     this.listRule = data.listRule ?? null

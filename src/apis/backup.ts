@@ -181,6 +181,12 @@ export function registerBackupRoutes(app: BaseApp, router: Router): void {
       for (const [zipPath, zipEntry] of zipEntries) {
         if (zipEntry.dir) continue
         const targetFile = path.join(restoreDir, zipPath)
+        // Zip slip protection: ensure resolved path stays within restoreDir
+        const resolved = path.resolve(targetFile)
+        const base = path.resolve(restoreDir)
+        if (!resolved.startsWith(base + path.sep)) {
+          throw new Error(`Zip slip detected: entry "${zipPath}" would escape restore directory`)
+        }
         fs.mkdirSync(path.dirname(targetFile), { recursive: true })
         const content = await zipEntry.async('nodebuffer')
         fs.writeFileSync(targetFile, content)

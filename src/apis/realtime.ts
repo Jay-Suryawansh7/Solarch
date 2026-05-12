@@ -2,6 +2,9 @@ import { Router, Request, Response } from 'express'
 import { BaseApp } from '../core/base'
 import { Broker, Client, Message } from '../tools/subscriptions/broker'
 import { WebSocket } from 'ws'
+import { canAccessRecord } from './record_helpers'
+import { RecordModel as PBRecord } from '../core/record'
+import { RecordFieldResolver, RequestInfo } from '../core/record_field_resolver'
 
 const broker = new Broker()
 const sseClients = new Map<string, Response>()
@@ -77,8 +80,8 @@ export function registerRealtimeRoutes(app: BaseApp, router: Router): void {
   })
 }
 
-export function setupWebSocketRealtime(wss: any): void {
-  wss.on('connection', (ws: WebSocket) => {
+export function setupWebSocketRealtime(wss: any, app?: BaseApp): void {
+  wss.on('connection', (ws: WebSocket, req?: any) => {
     const clientId = generateClientId()
     const client: Client = {
       id: clientId,
@@ -93,15 +96,86 @@ export function setupWebSocketRealtime(wss: any): void {
       },
     }
 
+    // Validate auth token if app is provided
+    let authRecord: PBRecord | null = null
+    let isAdmin = false
+    if (app) {
+      try {
+        const url = req?.url || ''
+        const queryIndex = url.indexOf('?')
+        let token = ''
+        if (queryIndex >= 0) {
+          const searchParams = new URLSearchParams(url.slice(queryIndex))
+          token = searchParams.get('token') || ''
+        }
+        if (!token && req?.headers?.authorization) {
+          const authHeader = req.headers.authorization
+          token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader
+        }
+        if (token) {
+          const payload = app.parseJWT(token, app.getJwtSecret())
+          if (payload) {
+            if (payload.type === 'admin' && payload.id) {
+              isAdmin = true
+            } else if (payload.type === 'auth' && payload.id) {
+              const db = app.db().getDataDB()
+              const collection = app.findCachedCollectionByNameOrId(payload.collectionId)
+              if (collection) {
+                const row = db.prepare(`SELECT * FROM _r_${collection.id} WHERE id = ?`).get(payload.id) as any
+                if (row) {
+                  authRecord = new PBRecord(collection.id, collection.name, row)
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Auth parsing failure — connection proceeds but authRecord remains null
+      }
+    }
+
     broker.addClient(client)
 
-    ws.send(JSON.stringify({ type: 'connected', clientId }))
+    ws.send(JSON.stringify({ type: 'connected', clientId, authenticated: !!(authRecord || isAdmin) }))
 
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString())
         if (msg.type === 'subscribe' && Array.isArray(msg.channels)) {
           for (const channel of msg.channels) {
+            // Check collection-level access for record channels
+            if (app && channel.startsWith('collections.') && channel.endsWith('.records')) {
+              const collectionId = channel.replace('collections.', '').replace('.records', '')
+              let canSubscribe = false
+              if (isAdmin) {
+                canSubscribe = true
+              } else {
+                try {
+                  const collection = app.findCachedCollectionByNameOrId(collectionId)
+                  if (collection && collection.viewRule !== null) {
+                    if (collection.viewRule === '') {
+                      canSubscribe = true
+                    } else if (authRecord) {
+                      const requestInfo: RequestInfo = {
+                        auth: authRecord, isAdmin: false, method: 'GET',
+                        headers: {}, query: {}, body: {}, data: {}, context: 'view',
+                      }
+                      const resolver = new RecordFieldResolver({
+                        app, record: authRecord, collection, requestInfo,
+                      })
+                      const { evaluateRule } = require('../core/record_field_resolver')
+                      canSubscribe = evaluateRule(collection.viewRule, resolver)
+                    }
+                  }
+                } catch {
+                  canSubscribe = false
+                }
+              }
+              if (!canSubscribe) {
+                ws.send(JSON.stringify({ type: 'error', message: `Not authorized to subscribe to channel: ${channel}` }))
+                continue
+              }
+            }
             broker.subscribe(clientId, channel)
           }
           ws.send(JSON.stringify({

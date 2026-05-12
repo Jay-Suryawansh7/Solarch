@@ -7,6 +7,7 @@ import { hashPassword, verifyPassword, generateJWT, parseJWT, generateRandomStri
 import { DateTime } from '../tools/types/types'
 import { oauth2Registry, handleOAuth2Callback, linkExternalAuth } from '../tools/auth/oauth2'
 import { OTP } from '../core/auth_models'
+import { createHash, createHmac } from 'crypto'
 
 const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -123,6 +124,28 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
         return res.status(403).json({ code: 403, message: 'OAuth2 is not enabled for this collection.' })
       }
 
+      // Validate redirectURL against app URL to prevent open redirect
+      if (redirectURL) {
+        try {
+          const parsed = new URL(redirectURL)
+          const appUrl = app.settings().appURL || 'http://localhost:8090'
+          const allowedOrigins = [appUrl, appUrl.replace(/\/+$/, ''), 'http://localhost:8090', 'http://localhost:3000']
+          const isAllowed = allowedOrigins.some(ao => {
+            try {
+              const allowedUrl = new URL(ao)
+              return parsed.origin === allowedUrl.origin && parsed.protocol === allowedUrl.protocol
+            } catch {
+              return redirectURL.startsWith(ao)
+            }
+          })
+          if (!isAllowed) {
+            return res.status(400).json({ code: 400, message: 'Invalid redirect URL.' })
+          }
+        } catch {
+          return res.status(400).json({ code: 400, message: 'Invalid redirect URL.' })
+        }
+      }
+
       const db = app.db().getDataDB()
 
       if (state) {
@@ -215,7 +238,8 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
         return res.status(400).json({ code: 400, message: 'OTP has expired.' })
       }
 
-      if (otp.password !== password) {
+      const incomingHash = createHash('sha256').update(password).digest('hex')
+      if (otp.password !== incomingHash) {
         return res.status(400).json({ code: 400, message: 'Invalid OTP password.' })
       }
 
@@ -275,10 +299,11 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
       // Delete any existing OTPs for this record
       db.prepare(`DELETE FROM _otps WHERE recordRef = ? AND collectionId = ?`).run(record.id, collection.id)
 
-      // Store OTP with request IP
+      // Store OTP with hashed password
+      const otpHash = createHash('sha256').update(otpPassword).digest('hex')
       db.prepare(
         `INSERT INTO _otps (id, recordRef, collectionId, password, sentTo, created, updated, createdAt, expiresAt, requestIp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(otpId, record.id, collection.id, otpPassword, email, now, now, now, expiresAt, requestIp)
+      ).run(otpId, record.id, collection.id, otpHash, email, now, now, now, expiresAt, requestIp)
 
       // Send OTP email if SMTP is configured
       const settings = app.settings()
@@ -478,18 +503,23 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
   router.use('/api/collections/:collectionIdOrName', authRouter)
 }
 
+// FIXED[M-6]: RFC 6238-compliant TOTP using stdlib crypto
 function generateTOTPCode(secret: string, period = 30, digits = 6): string {
   const now = Math.floor(Date.now() / 1000)
-  const timeStep = Math.floor(now / period)
-  // Simple hash-based TOTP for demonstration
-  const crypto = require('crypto')
-  const hmac = crypto.createHmac('sha1', secret)
-  hmac.update(Buffer.from(timeStep.toString().padStart(16, '0'), 'hex'))
+  let timeStep = Math.floor(now / period)
+  const counter = Buffer.alloc(8)
+  for (let i = 7; i >= 0; i--) {
+    counter[i] = timeStep & 0xff
+    timeStep >>= 8
+  }
+  const hmac = createHmac('sha1', secret)
+  hmac.update(counter)
   const hash = hmac.digest()
   const offset = hash[hash.length - 1] & 0x0f
-  const code = ((hash[offset] & 0x7f) << 24 |
-    (hash[offset + 1] & 0xff) << 16 |
-    (hash[offset + 2] & 0xff) << 8 |
-    (hash[offset + 3] & 0xff)) % Math.pow(10, digits)
+  const binaryCode = ((hash[offset] & 0x7f) << 24) |
+    ((hash[offset + 1] & 0xff) << 16) |
+    ((hash[offset + 2] & 0xff) << 8) |
+    (hash[offset + 3] & 0xff)
+  const code = binaryCode % Math.pow(10, digits)
   return code.toString().padStart(digits, '0')
 }
