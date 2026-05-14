@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { BaseApp } from '../core/base'
 import { requireSuperuserAuth } from './middlewares_auth'
+import { parsePagination } from '../utils/pagination'
 import http from 'http'
 
 interface BatchRequest {
@@ -183,8 +184,8 @@ async function routeBatchRequest(app: BaseApp, req: any, res: any, path: string)
           res.json(enriched.toJSON())
         } else {
           requestInfo.context = 'list'
-          const page = parseInt(req.query.page) || 1
-          const perPage = parseInt(req.query.perPage) || 30
+          // FIXED[N-1]: Enforce pagination bounds via shared helper
+          const { page, perPage } = parsePagination(req.query)
           const filter = req.query.filter
           const sort = req.query.sort
           const expand = req.query.expand ? req.query.expand.split(',') : undefined

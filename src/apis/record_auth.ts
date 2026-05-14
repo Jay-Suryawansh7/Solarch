@@ -385,7 +385,8 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  authRouter.post('/refresh', async (req: Request, res: Response) => {
+  // FIXED[H-2]: Added rate limiting to record auth refresh
+  authRouter.post('/refresh', authRateLimiter, async (req: Request, res: Response) => {
     try {
       const { token } = req.body
       if (!token) {

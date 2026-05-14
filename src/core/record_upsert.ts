@@ -46,6 +46,8 @@ export class RecordUpsertForm {
       'lastVerifiedAt',
       'mfaEnabled',
       'mfaSecret',
+      'passwordHash',   // FIXED[C-1]: Block direct password hash assignment from user input
+      'emailVisibility', // FIXED[C-1]: Block user from overriding email visibility default
     ]
 
     const sanitized: Record<string, any> = {}

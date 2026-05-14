@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.15.0 — Critical Regression Fixes + Security Hardening (2026-05-14)
+
+### Regressions Addressed
+
+These four findings were specified as fixes in Round 5 (v0.14.0) but were not applied to the source until this release:
+
+- **C-1:** `passwordHash` was listed as a required `stripProtectedFields` addition in Round 5 but never added to the `protectedFields` array. This was the single highest-risk gap — an attacker sending `{ "passwordHash": "<known_bcrypt_hash>" }` could bypass authentication entirely.
+- **C-2:** The `/api/installer` endpoint was flagged as allowing unlimited superuser creation by email enumeration but only the per-email check was documented; the global-superuser-count guard was never written.
+- **H-1:** Admin `confirm-password-reset` endpoint was flagged for missing rate limiting but the `adminResetRateLimiter` middleware was never applied to the route.
+- **H-2:** Record auth `/refresh` endpoint was flagged for missing rate limiting but the `authRateLimiter` middleware was never applied.
+
+### New Findings
+
+#### High
+- **N-1:** Added `parsePagination()` helper (`src/utils/pagination.ts`) enforcing `perPage` cap at 200 and page cap at 10000 across all list endpoints (`record_crud`, `batch`, `logs`). Previously `perPage=999999999` could cause OOM from unbounded SQL `LIMIT`.
+- **N-2:** `BaseApp.bootstrap()` now validates JWT secret at startup — throws `FATAL` error if `TSPOONBASE_JWT_SECRET` is missing or under 32 characters. Previously the server booted but silently failed on auth.
+
+#### Medium
+- **N-3:** LLM node output capped at 100KB (both OpenAI and Anthropic paths). Previously an LLM could return megabytes of text causing `_agentExecutions` database bloat.
+- **N-4:** Logger now auto-redacts Bearer tokens, 32+ character hex strings, and apiKey/secret/token/password/hash key-value pairs before emitting. Previously sensitive data could leak into `_logs` and `console.error`.
+- **N-5:** Email change `/request-email-change` and `/confirm-email-change` endpoints now use opaque one-time tokens (stored in `_passwordResetTokens` table) instead of JWTs. Tokens are hashed before storage, expire after 2 hours, and are revoked on use.
+
+### Verified Clean
+- SQL injection: all identifier paths validated, all values parameterized, `findRecordsByRawQuery` throws unconditionally
+- XSS: no HTML rendering anywhere in server code
+- CSRF: Bearer token auth with CSP headers
+- Mass assignment: `stripProtectedFields` now includes `passwordHash` and `emailVisibility`
+- Auth: all sensitive endpoints gated by `requireSuperuserAuth` or `requireAuth`
+- Rate limiting: enabled by default (60 req/min IP), applied to all auth flows and admin routes
+- Error leakage: all errors return `'Internal server error'` to client; logger now sanitizes before emitting
+- Crypto: bcrypt, AES-256-CBC with per-encryption salt, timing-safe OTP comparison, `crypto.randomBytes` for all randomness
+- SSRF: `isPrivateHostname` blocks private IPs; `ALLOWED_URL_PREFIXES` respected
+- Path traversal: `assertPathSafe` + `path.basename` sanitizer on all file paths
+- No `Math.random()` — all randomness from `crypto.*`
+
+---
+
 ## v0.14.0 — Security Audit Remediation (2026-05-14)
 
 ### Critical

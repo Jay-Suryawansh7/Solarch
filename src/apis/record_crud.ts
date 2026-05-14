@@ -6,6 +6,7 @@ import { enrichRecord, enrichRecords, canAccessRecord, checkCollectionAccess } f
 import { RequestInfo } from '../core/record_field_resolver'
 import { validateAndCreateRecord, validateAndUpdateRecord } from '../core/record_upsert'
 import { broadcastRecordEvent } from './realtime'
+import { parsePagination } from '../utils/pagination'
 
 export function registerRecordCRUDRoutes(app: BaseApp, router: Router): void {
   const recordRouter = Router({ mergeParams: true })
@@ -22,8 +23,8 @@ export function registerRecordCRUDRoutes(app: BaseApp, router: Router): void {
 
       requestInfo.context = 'list'
 
-      const page = parseInt(req.query.page as string) || 1
-      const perPage = parseInt(req.query.perPage as string) || 30
+      // FIXED[N-1]: Enforce pagination bounds via shared helper
+      const { page, perPage } = parsePagination(req.query)
       const filter = req.query.filter as string
       const sort = req.query.sort as string
       const expand = req.query.expand ? (req.query.expand as string).split(',') : undefined

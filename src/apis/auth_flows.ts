@@ -245,11 +245,8 @@ export function registerEmailChangeRoutes(app: BaseApp, router: Router): void {
       }
 
       const record = new PBRecord(collection.id, collection.name, row)
-      const changeToken = app.generateJWT(
-        { id: record.id, type: 'changeEmail', collectionId: collection.id, newEmail },
-        app.getJwtSecret(),
-        '2h'
-      )
+      // FIXED[N-5]: Use opaque token instead of JWT for email change
+      const changeToken = app.createPasswordResetToken(record.id, `emailChange:${collection.id}`, 2, newEmail)
 
       // Send email if SMTP is configured
       try {
@@ -284,18 +281,29 @@ export function registerEmailChangeRoutes(app: BaseApp, router: Router): void {
         return res.status(400).json({ code: 400, message: 'Invalid collection.' })
       }
 
-      const payload = app.parseJWT(token, app.getJwtSecret())
-      if (!payload || payload.type !== 'changeEmail') {
+      const tokenType = `emailChange:${collection.id}`
+      if (!app.isPasswordResetTokenValid(token, tokenType)) {
         return res.status(400).json({ code: 400, message: 'Invalid or expired token.' })
       }
 
+      const tokenData = app.getPasswordResetTokenData(token, tokenType)
+      if (!tokenData || !tokenData.data) {
+        return res.status(400).json({ code: 400, message: 'Invalid token.' })
+      }
+
+      const revoked = app.revokePasswordResetToken(token, tokenType)
+      if (!revoked) {
+        return res.status(400).json({ code: 400, message: 'Token has already been used.' })
+      }
+
       const db = app.db().getDataDB()
-      const row = db.prepare(`SELECT * FROM _r_${collection.id} WHERE id = ?`).get(payload.id) as any
+      const row = db.prepare(`SELECT * FROM _r_${collection.id} WHERE id = ?`).get(tokenData.userId) as any
       if (!row) {
         return res.status(400).json({ code: 400, message: 'Invalid token.' })
       }
 
-      db.prepare(`UPDATE _r_${collection.id} SET email = ? WHERE id = ?`).run(payload.newEmail, payload.id)
+      const newEmail = tokenData.data
+      db.prepare(`UPDATE _r_${collection.id} SET email = ? WHERE id = ?`).run(newEmail, tokenData.userId)
 
       res.json({ code: 200, message: 'Email changed successfully.' })
     } catch (err: any) {

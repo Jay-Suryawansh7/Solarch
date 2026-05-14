@@ -1,13 +1,14 @@
 import { Router, Request, Response } from 'express'
 import { BaseApp } from '../core/base'
 import { requireSuperuserAuth } from './middlewares_auth'
+import { parsePagination } from '../utils/pagination'
 
 export function registerLogRoutes(app: BaseApp, router: Router): void {
   router.get('/api/logs', requireSuperuserAuth(app), async (req: Request, res: Response) => {
     try {
       const db = app.db().getDataDB()
-      const page = parseInt(req.query.page as string) || 1
-      const perPage = parseInt(req.query.perPage as string) || 30
+      // FIXED[N-1]: Enforce pagination bounds via shared helper
+      const { page, perPage } = parsePagination(req.query)
       const level = req.query.level as string
 
       let whereClause = ''

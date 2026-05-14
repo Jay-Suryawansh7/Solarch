@@ -115,7 +115,10 @@ registerNode({
         })
         if (!res.ok) return makeResult(ctx.executionId, 'llm', null, 'error', `OpenAI error: ${res.status} ${res.statusText}`)
         const json: any = await res.json()
-        const text = json.choices?.[0]?.message?.content || ''
+        const rawText = json.choices?.[0]?.message?.content || ''
+        // FIXED[N-3]: Cap LLM output to prevent response-flooding DoS
+        const MAX_LLM_OUTPUT = 100000
+        const text = rawText.slice(0, MAX_LLM_OUTPUT)
         const usage = json.usage || {}
         return { ...makeResult(ctx.executionId, 'llm', text), tokenUsage: { prompt: usage.prompt_tokens || 0, completion: usage.completion_tokens || 0, total: usage.total_tokens || 0 } }
       } finally { clearTimeout(timer) }
@@ -134,7 +137,10 @@ registerNode({
         })
         if (!res.ok) return makeResult(ctx.executionId, 'llm', null, 'error', `Anthropic error: ${res.status} ${res.statusText}`)
         const json: any = await res.json()
-        return makeResult(ctx.executionId, 'llm', json.content?.[0]?.text || '')
+        const rawContent = json.content?.[0]?.text || ''
+        // FIXED[N-3]: Cap LLM output to prevent response-flooding DoS
+        const MAX_LLM_OUTPUT = 100000
+        return makeResult(ctx.executionId, 'llm', rawContent.slice(0, MAX_LLM_OUTPUT))
       } finally { clearTimeout(timer) }
     }
 

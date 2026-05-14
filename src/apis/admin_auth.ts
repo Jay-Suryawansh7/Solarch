@@ -176,7 +176,8 @@ export function registerAdminAuthRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  router.post('/api/admins/confirm-password-reset', async (req: Request, res: Response) => {
+  // FIXED[H-1]: Added rate limiting to admin password reset confirmation
+  router.post('/api/admins/confirm-password-reset', adminResetRateLimiter, async (req: Request, res: Response) => {
     try {
       const { token, password, passwordConfirm } = req.body
       if (!token || !password) {

@@ -42,9 +42,10 @@ export function registerInstallerRoutes(app: BaseApp, router: Router): void {
         )
       `)
 
-      const existing = db.prepare(`SELECT id FROM _superusers WHERE email = ?`).get(email)
-      if (existing) {
-        return res.status(400).json({ code: 400, message: 'Superuser already exists.' })
+      // FIXED[C-2]: Block installer if ANY superuser already exists
+      const superuserCount = (db.prepare(`SELECT COUNT(*) as count FROM _superusers`).get() as { count: number }).count
+      if (superuserCount > 0) {
+        return res.status(403).json({ code: 403, message: 'Setup is already complete.' })
       }
 
       const passwordHash = await hashPassword(password)

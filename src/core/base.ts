@@ -116,6 +116,14 @@ export class BaseApp {
     await this.reloadSettings()
     await this.reloadCachedCollections()
 
+    // FIXED[N-2]: Fail startup if JWT secret is not configured
+    const secret = this.getJwtSecretSafe()
+    if (!secret || secret.length < 32) {
+      const envErr = 'FATAL: JWT secret is not configured. Set TSPOONBASE_JWT_SECRET to a value of at least 32 characters.'
+      console.error(envErr)
+      throw new Error(envErr)
+    }
+
     this.bootstrapped = true
 
     await this.onBootstrap.trigger({ app: this })
@@ -610,6 +618,8 @@ export class BaseApp {
     try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN description TEXT DEFAULT \'\'') } catch {}
     try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN version TEXT DEFAULT \'1\'') } catch {}
     try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN enabled INTEGER DEFAULT 1') } catch {}
+    // FIXED[N-5]: Add data column to _passwordResetTokens for storing opaque token metadata
+    try { db.exec('ALTER TABLE _passwordResetTokens ADD COLUMN data TEXT DEFAULT \'\'') } catch {}
 
     const now = new Date().toISOString()
     db.prepare("INSERT OR IGNORE INTO _settings (key, value, created, updated) VALUES (?, ?, ?, ?)").run(
@@ -749,7 +759,7 @@ export class BaseApp {
     return !!row
   }
 
-  createPasswordResetToken(userId: string, type: string, ttlHours = 1): string {
+  createPasswordResetToken(userId: string, type: string, ttlHours = 1, data?: string): string {
     const db = this.db().getDataDB()
     const crypto = require('crypto')
     const token = crypto.randomBytes(32).toString('hex')
@@ -757,21 +767,43 @@ export class BaseApp {
     const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString()
     const now = new Date().toISOString()
     db.prepare(
-      `INSERT OR REPLACE INTO _passwordResetTokens (tokenHash, userId, type, expiresAt, created) VALUES (?, ?, ?, ?, ?)`
-    ).run(tokenHash, userId, type, expiresAt, now)
+      `INSERT OR REPLACE INTO _passwordResetTokens (tokenHash, userId, type, data, expiresAt, created) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(tokenHash, userId, type, data || '', expiresAt, now)
     return token
+  }
+
+  getPasswordResetTokenData(token: string, type: string): { userId: string; data: string } | null {
+    const db = this.db().getDataDB()
+    const crypto = require('crypto')
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
+    const row = db.prepare(
+      `SELECT * FROM _passwordResetTokens WHERE tokenHash = ? AND type = ? AND usedAt IS NULL AND expiresAt > ?`
+    ).get(tokenHash, type, new Date().toISOString()) as any
+    if (!row) return null
+    return { userId: row.userId, data: row.data || '' }
   }
 
   private _logger?: any
 
+  // FIXED[N-4]: Sanitize sensitive patterns from log data before emitting
+  private sanitizeLogData(input: unknown): string {
+    if (input === null || input === undefined) return ''
+    let str = typeof input === 'string' ? input : String(input)
+    str = str.replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer <REDACTED>')
+    str = str.replace(/[A-Fa-f0-9]{32,}/gi, '<REDACTED_HEX>')
+    str = str.replace(/(api[_-]?key|secret|token|password|hash|authorization)\s*[:=]\s*['"]?\S+['"]?/gi, '$1=<REDACTED>')
+    return str
+  }
+
   // FIXED[L-4]: Cache logger instance to avoid per-call object creation
   logger(): any {
     if (this._logger) return this._logger
+    const self = this
     this._logger = {
-      info: (msg: string, data?: any) => console.log(`[INFO] ${msg}`, data ?? ''),
-      error: (msg: string, data?: any) => console.error(`[ERROR] ${msg}`, data ?? ''),
-      warn: (msg: string, data?: any) => console.warn(`[WARN] ${msg}`, data ?? ''),
-      debug: (msg: string, data?: any) => { if (this.isDev) console.debug(`[DEBUG] ${msg}`, data ?? '') },
+      info: (msg: string, data?: any) => console.log(`[INFO] ${self.sanitizeLogData(msg)}`, self.sanitizeLogData(data ?? '')),
+      error: (msg: string, data?: any) => console.error(`[ERROR] ${self.sanitizeLogData(msg)}`, self.sanitizeLogData(data ?? '')),
+      warn: (msg: string, data?: any) => console.warn(`[WARN] ${self.sanitizeLogData(msg)}`, self.sanitizeLogData(data ?? '')),
+      debug: (msg: string, data?: any) => { if (self.isDev) console.debug(`[DEBUG] ${self.sanitizeLogData(msg)}`, self.sanitizeLogData(data ?? '')) },
     }
     return this._logger
   }
