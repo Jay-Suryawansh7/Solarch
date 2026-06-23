@@ -1,5 +1,6 @@
 import { NodeDefinition, NodeExecutionResult, ExecutionContext } from './types'
 import vm from 'vm'
+import dns from 'dns'
 import { runInDeno } from '../tools/jsvm/deno_sandbox'
 import { getSandboxMode } from '../tools/jsvm/jsvm'
 
@@ -229,14 +230,33 @@ registerNode({
   },
 })
 
+function isPrivateIP(ip: string): boolean {
+  // Strip IPv6-mapped IPv4 prefix
+  let normalized = ip
+  if (normalized.startsWith('::ffff:')) normalized = normalized.slice(7)
+  if (normalized.startsWith('0:0:0:0:0:ffff:')) normalized = normalized.slice(15)
+
+  // IPv4 checks
+  if (normalized === '127.0.0.1' || normalized.startsWith('127.') || normalized === '0.0.0.0') return true
+  if (normalized.startsWith('10.') || normalized.startsWith('192.168.')) return true
+  if (normalized.startsWith('169.254.')) return true
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(normalized)) return true
+  // Broadcast
+  if (normalized === '255.255.255.255') return true
+
+  // IPv6 checks
+  const lower = normalized.toLowerCase()
+  if (lower === '::1' || lower === '[::1]') return true
+  if (lower === '::' || lower === '0:0:0:0:0:0:0:0') return true
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true  // ULA
+  if (lower.startsWith('fe80')) return true  // link-local
+
+  return false
+}
+
 function isPrivateHostname(hostname: string): boolean {
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]') return true
-  if (hostname.startsWith('127.') || hostname === '0.0.0.0') return true
-  if (hostname.startsWith('10.') || hostname.startsWith('192.168.')) return true
-  if (hostname.startsWith('169.254.')) return true
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true
-  if (hostname.startsWith('fc') || hostname.startsWith('fd') || hostname.toLowerCase() === '::1') return true
-  return false
+  return isPrivateIP(hostname)
 }
 
 registerNode({
@@ -254,8 +274,25 @@ registerNode({
       return makeResult(ctx.executionId, 'http_request', null, 'error', 'Invalid URL')
     }
 
+    // SECURITY: Validate protocol — only http and https allowed
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return makeResult(ctx.executionId, 'http_request', null, 'error', `Protocol "${parsed.protocol}" is not allowed. Use http or https.`)
+    }
+
+    // SECURITY: Hostname-level check (catches obvious private names)
     if (isPrivateHostname(parsed.hostname)) {
       return makeResult(ctx.executionId, 'http_request', null, 'error', 'Requests to private/loopback addresses are blocked')
+    }
+
+    // SECURITY: DNS resolution — resolve hostname and validate the resolved IP
+    // This prevents DNS rebinding attacks where a hostname resolves to a private IP
+    try {
+      const { address } = await dns.promises.lookup(parsed.hostname)
+      if (isPrivateIP(address)) {
+        return makeResult(ctx.executionId, 'http_request', null, 'error', 'Resolved IP address is in a private/reserved range')
+      }
+    } catch (dnsErr: any) {
+      return makeResult(ctx.executionId, 'http_request', null, 'error', `DNS resolution failed: ${dnsErr.code || dnsErr.message}`)
     }
 
     const allowedPrefixes = process.env.ALLOWED_URL_PREFIXES
@@ -274,7 +311,34 @@ registerNode({
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 30000)
     try {
-      const res = await fetch(urlStr, { method, signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(headers as Record<string, string>) }, body: body as string | undefined })
+      // SECURITY: redirect: 'manual' prevents automatic redirect following
+      // This blocks attacks where a public URL redirects to an internal address
+      const res = await fetch(urlStr, { method, signal: controller.signal, redirect: 'manual', headers: { 'Content-Type': 'application/json', ...(headers as Record<string, string>) }, body: body as string | undefined })
+
+      // SECURITY: If the response is a redirect, validate the redirect target
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location')
+        if (location) {
+          try {
+            const redirectUrl = new URL(location, urlStr)
+            if (redirectUrl.protocol !== 'http:' && redirectUrl.protocol !== 'https:') {
+              return makeResult(ctx.executionId, 'http_request', null, 'error', 'Redirect to non-HTTP protocol blocked')
+            }
+            if (isPrivateHostname(redirectUrl.hostname)) {
+              return makeResult(ctx.executionId, 'http_request', null, 'error', 'Redirect to private/loopback address blocked')
+            }
+            // Resolve redirect target DNS too
+            const { address: redirectAddr } = await dns.promises.lookup(redirectUrl.hostname)
+            if (isPrivateIP(redirectAddr)) {
+              return makeResult(ctx.executionId, 'http_request', null, 'error', 'Redirect target resolves to private/reserved IP')
+            }
+          } catch {
+            return makeResult(ctx.executionId, 'http_request', null, 'error', 'Invalid redirect URL')
+          }
+        }
+        return makeResult(ctx.executionId, 'http_request', { status: res.status, data: null, redirectUrl: location, headers: Object.fromEntries(res.headers.entries()) })
+      }
+
       const text = await res.text()
       let data: any = text
       try { data = JSON.parse(text) } catch { }

@@ -13,7 +13,7 @@ import { hashPassword, verifyPassword, parseJWT } from '../tools/security/crypto
 import jwt from 'jsonwebtoken'
 import { SettingsEncryption } from './settings_encrypt'
 import path from 'path'
-import { validateIdentifier } from '../utils/sql_safe'
+import { validateIdentifier, quoteIdentifier } from '../utils/sql_safe'
 
 export interface BaseAppConfig {
   isDev: boolean
@@ -160,7 +160,6 @@ export class BaseApp {
       try {
         const parsed = JSON.parse(row.value)
         const encryption = new SettingsEncryption(this)
-        // FIXED[H-2]: Await async decryptSettings
         const decrypted = await encryption.decryptSettings(parsed)
         this._settings = { ...defaultSettings(), ...decrypted }
       } catch {
@@ -251,57 +250,37 @@ export class BaseApp {
         )
         this._collectionCache.set(model.id, model)
         this._collectionCache.set(model.name.toLowerCase(), model)
-
-        // Create record table for base and auth collections
         if (model.isBase() || model.isAuth()) {
-          const columns = ['id TEXT PRIMARY KEY', 'created TEXT', 'updated TEXT', 'collectionId TEXT', 'collectionName TEXT']
+          const columns = ['"id" TEXT PRIMARY KEY', '"created" TEXT', '"updated" TEXT', '"collectionId" TEXT', '"collectionName" TEXT']
 
-          // Auth collections get extra columns
           if (model.isAuth()) {
-            columns.push('email TEXT UNIQUE')
-            columns.push('emailVisibility INTEGER DEFAULT 1')
-            columns.push('passwordHash TEXT')
-            columns.push('verified INTEGER DEFAULT 0')
-            columns.push('lastResetSentAt TEXT')
-            columns.push('lastVerificationSentAt TEXT')
-            columns.push('lastLoginAt TEXT')
+            columns.push('"email" TEXT UNIQUE')
+            columns.push('"emailVisibility" INTEGER DEFAULT 1')
+            columns.push('"passwordHash" TEXT')
+            columns.push('"verified" INTEGER DEFAULT 0')
+            columns.push('"lastResetSentAt" TEXT')
+            columns.push('"lastVerificationSentAt" TEXT')
+            columns.push('"lastLoginAt" TEXT')
           }
 
           for (const field of model.fields) {
+            validateIdentifier(field.name, `field name "${field.name}"`)
+            const quotedName = quoteIdentifier(field.name)
             if (field.type === 'number') {
-              columns.push(`${field.name} REAL`)
+              columns.push(`${quotedName} REAL`)
             } else if (field.type === 'bool') {
-              columns.push(`${field.name} INTEGER DEFAULT 0`)
-            } else if (field.type === 'json') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'file') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'relation') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'select') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'date') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'email') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'url') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'editor') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'geoPoint') {
-              columns.push(`${field.name} TEXT`)
-            } else if (field.type === 'autodate') {
-              columns.push(`${field.name} TEXT`)
+              columns.push(`${quotedName} INTEGER DEFAULT 0`)
             } else {
-              columns.push(`${field.name} TEXT`)
+              columns.push(`${quotedName} TEXT`)
             }
           }
-          db.exec(`CREATE TABLE IF NOT EXISTS _r_${model.id} (${columns.join(', ')})`)
+          db.exec(`CREATE TABLE IF NOT EXISTS ${quoteIdentifier(`_r_${model.id}`)} (${columns.join(', ')})`)
         }
       } else if (model instanceof PBRecord) {
         const tableName = `_r_${model.collectionId}`
+        const quotedTable = quoteIdentifier(tableName)
         const whitelist = this.getRecordFieldWhitelist(model.collectionId)
-        const columns = ['id', 'created', 'updated', 'collectionId', 'collectionName']
+        const columns = ['"id"', '"created"', '"updated"', '"collectionId"', '"collectionName"']
         const values: any[] = [model.id, model.created.toISOString(), model.updated.toISOString(), model.collectionId, model.collectionName]
         const placeholders = ['?', '?', '?', '?', '?']
 
@@ -311,7 +290,7 @@ export class BaseApp {
             continue
           }
           validateIdentifier(key, `record field "${key}"`)
-          columns.push(key)
+          columns.push(quoteIdentifier(key))
           if (typeof value === 'boolean') {
             values.push(value ? 1 : 0)
           } else if (typeof value === 'object') {
@@ -322,7 +301,7 @@ export class BaseApp {
           placeholders.push('?')
         }
 
-        db.prepare(`INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`).run(...values)
+        db.prepare(`INSERT INTO ${quotedTable} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`).run(...values)
       } else {
         const tableName = model.tableName()
         db.prepare(`INSERT INTO ${tableName} (id, created, updated, data) VALUES (?, ?, ?, ?)`).run(
@@ -348,8 +327,9 @@ export class BaseApp {
         this._collectionCache.set(model.name.toLowerCase(), model)
       } else if (model instanceof PBRecord) {
         const tableName = `_r_${model.collectionId}`
+        const quotedTable = quoteIdentifier(tableName)
         const whitelist = this.getRecordFieldWhitelist(model.collectionId)
-        const setClauses: string[] = ['updated = ?']
+        const setClauses: string[] = ['"updated" = ?']
         const values: any[] = [now]
 
         for (const [key, value] of model.entries()) {
@@ -358,7 +338,7 @@ export class BaseApp {
             continue
           }
           validateIdentifier(key, `record field "${key}"`)
-          setClauses.push(`${key} = ?`)
+          setClauses.push(`${quoteIdentifier(key)} = ?`)
           if (typeof value === 'boolean') {
             values.push(value ? 1 : 0)
           } else if (typeof value === 'object') {
@@ -369,7 +349,7 @@ export class BaseApp {
         }
 
         values.push(model.id)
-        db.prepare(`UPDATE ${tableName} SET ${setClauses.join(', ')} WHERE id = ?`).run(...values)
+        db.prepare(`UPDATE ${quotedTable} SET ${setClauses.join(', ')} WHERE id = ?`).run(...values)
       } else {
         const tableName = model.tableName()
         db.prepare(`UPDATE ${tableName} SET data = ?, updated = ? WHERE id = ?`).run(
@@ -396,12 +376,11 @@ export class BaseApp {
       db.prepare("DELETE FROM _collections WHERE id = ?").run(model.id)
       this._collectionCache.delete(model.id)
       this._collectionCache.delete(model.name.toLowerCase())
-      db.exec(`DROP TABLE IF EXISTS _r_${model.id}`)
+      db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(`_r_${model.id}`)}`)
     } else if (model instanceof PBRecord) {
       const tableName = `_r_${model.collectionId}`
-      db.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(model.id)
+      db.prepare(`DELETE FROM ${quoteIdentifier(tableName)} WHERE id = ?`).run(model.id)
 
-      // Nullify relations pointing to this record
       const collections = await this.findAllCollections()
       for (const col of collections) {
         for (const field of col.fields) {
@@ -415,7 +394,6 @@ export class BaseApp {
         }
       }
 
-      // Clean up associated files
       try {
         const fsys = this.getFilesystem()
         const col = await this.findCollectionByNameOrId(model.collectionId)
@@ -426,16 +404,16 @@ export class BaseApp {
               if (Array.isArray(files)) {
                 for (const f of files) {
                   const storageKey = `${model.collectionName}/${model.id}/${f}`
-                  await fsys.deleteFile(storageKey).catch(() => {})
+                  await fsys.deleteFile(storageKey).catch(() => { })
                 }
               }
             }
           }
         }
-      } catch {}
+      } catch { }
     } else {
       const tableName = model.tableName()
-      db.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(model.id)
+      db.prepare(`DELETE FROM ${quoteIdentifier(tableName)} WHERE id = ?`).run(model.id)
     }
 
     await this.onModelAfterDeleteSuccess.trigger({ app: this, model })
@@ -501,8 +479,8 @@ export class BaseApp {
       )
     `)
 
-    try { db.exec('ALTER TABLE _mfas ADD COLUMN secret TEXT DEFAULT \'\'') } catch {}
-    try { db.exec('ALTER TABLE _mfas ADD COLUMN backupCodes TEXT DEFAULT \'\'') } catch {}
+    try { db.exec('ALTER TABLE _mfas ADD COLUMN secret TEXT DEFAULT \'\'') } catch { }
+    try { db.exec('ALTER TABLE _mfas ADD COLUMN backupCodes TEXT DEFAULT \'\'') } catch { }
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS _otps (
@@ -607,9 +585,9 @@ export class BaseApp {
       )
     `)
 
-    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN description TEXT DEFAULT \'\'') } catch {}
-    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN version TEXT DEFAULT \'1\'') } catch {}
-    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN enabled INTEGER DEFAULT 1') } catch {}
+    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN description TEXT DEFAULT \'\'') } catch { }
+    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN version TEXT DEFAULT \'1\'') } catch { }
+    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN enabled INTEGER DEFAULT 1') } catch { }
 
     const now = new Date().toISOString()
     db.prepare("INSERT OR IGNORE INTO _settings (key, value, created, updated) VALUES (?, ?, ?, ?)").run(

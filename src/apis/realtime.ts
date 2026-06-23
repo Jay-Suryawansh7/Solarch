@@ -5,18 +5,17 @@ import { WebSocket } from 'ws'
 import { canAccessRecord } from './record_helpers'
 import { RecordModel as PBRecord } from '../core/record'
 import { RecordFieldResolver, RequestInfo } from '../core/record_field_resolver'
+import { quoteIdentifier } from '../utils/sql_safe'
 
 const broker = new Broker()
 const sseClients = new Map<string, Response>()
 
 export function registerRealtimeRoutes(app: BaseApp, router: Router): void {
-  // SSE endpoint
   router.get('/api/realtime', async (req: Request, res: Response) => {
     const clientId = req.query.clientId as string || generateClientId()
     const acceptHeader = req.headers.accept || ''
 
     if (acceptHeader.includes('text/event-stream')) {
-      // SSE connection
       res.setHeader('Content-Type', 'text/event-stream')
       res.setHeader('Cache-Control', 'no-cache')
       res.setHeader('Connection', 'keep-alive')
@@ -41,10 +40,8 @@ export function registerRealtimeRoutes(app: BaseApp, router: Router): void {
         sseClients.delete(clientId)
       })
 
-      // Send initial connection ack
       client.send(JSON.stringify({ type: 'connected', clientId }))
     } else {
-      // Regular JSON endpoint info
       res.json({
         code: 200,
         message: 'Realtime endpoint. Use WebSocket connection at ws://host:port/api/realtime or SSE at /api/realtime with Accept: text/event-stream',
@@ -53,7 +50,6 @@ export function registerRealtimeRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // Subscription management via HTTP
   router.post('/api/realtime', async (req: Request, res: Response) => {
     try {
       const { clientId, subscriptions } = req.body
@@ -97,7 +93,6 @@ export function setupWebSocketRealtime(wss: any, app?: BaseApp): void {
       },
     }
 
-    // Validate auth token if app is provided
     let authRecord: PBRecord | null = null
     let isAdmin = false
     if (app) {
@@ -122,7 +117,7 @@ export function setupWebSocketRealtime(wss: any, app?: BaseApp): void {
               const db = app.db().getDataDB()
               const collection = app.findCachedCollectionByNameOrId(payload.collectionId)
               if (collection) {
-                const row = db.prepare(`SELECT * FROM _r_${collection.id} WHERE id = ?`).get(payload.id) as any
+                const row = db.prepare(`SELECT * FROM ${quoteIdentifier(`_r_${collection.id}`)} WHERE id = ?`).get(payload.id) as any
                 if (row) {
                   authRecord = new PBRecord(collection.id, collection.name, row)
                 }
@@ -131,7 +126,6 @@ export function setupWebSocketRealtime(wss: any, app?: BaseApp): void {
           }
         }
       } catch {
-        // Auth parsing failure — connection proceeds but authRecord remains null
       }
     }
 
@@ -144,7 +138,6 @@ export function setupWebSocketRealtime(wss: any, app?: BaseApp): void {
         const msg = JSON.parse(data.toString())
         if (msg.type === 'subscribe' && Array.isArray(msg.channels)) {
           for (const channel of msg.channels) {
-            // Check collection-level access for record channels
             if (app && channel.startsWith('collections.') && channel.endsWith('.records')) {
               const collectionId = channel.replace('collections.', '').replace('.records', '')
               let canSubscribe = false
@@ -196,7 +189,7 @@ export function setupWebSocketRealtime(wss: any, app?: BaseApp): void {
         } else if (msg.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }))
         }
-      } catch {}
+      } catch { }
     })
 
     ws.on('close', () => {
@@ -236,7 +229,6 @@ export function getBrokerStats(): { clients: number; channels: number } {
   }
 }
 
-// FIXED[H-5]: Use crypto.randomBytes instead of Math.random()
 function generateClientId(): string {
   const { randomBytes } = require('crypto')
   return `c_${Date.now().toString(36)}_${randomBytes(4).toString('hex')}`
