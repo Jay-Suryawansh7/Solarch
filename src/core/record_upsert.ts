@@ -50,7 +50,6 @@ export class RecordUpsertForm {
 
     const sanitized: Record<string, any> = {}
     for (const [key, value] of Object.entries(data)) {
-      // FIXED[H-4]: Strip +/- modifiers before checking protected field list
       const resolvedKey = key.startsWith('+') ? key.slice(1) : key.endsWith('-') ? key.slice(0, -1) : key
       if (!protectedFields.includes(resolvedKey)) {
         if (key.startsWith('_') && !['username', 'email'].includes(key)) continue
@@ -275,6 +274,16 @@ export async function validateAndUpdateRecord(
 
   if (errors.length > 0) {
     return { record: null as any, errors }
+  }
+  const isPasswordChange = data.newPassword !== undefined || data.password !== undefined
+  if (isPasswordChange && collection.isAuth()) {
+    const storedHash = existingRecord.get('passwordHash')
+    if (storedHash) {
+      const valid = await app.verifyPassword(data.oldPassword || '', storedHash)
+      if (!valid) {
+        return { record: null as any, errors: [{ field: 'oldPassword', message: 'Incorrect password.' }] }
+      }
+    }
   }
 
   const record = form.buildRecord()

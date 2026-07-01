@@ -50,6 +50,7 @@ export function registerRealtimeRoutes(app: BaseApp, router: Router): void {
     }
   })
 
+
   router.post('/api/realtime', async (req: Request, res: Response) => {
     try {
       const { clientId, subscriptions } = req.body
@@ -57,24 +58,82 @@ export function registerRealtimeRoutes(app: BaseApp, router: Router): void {
         return res.status(400).json({ code: 400, message: 'Invalid request. clientId and subscriptions array required.' })
       }
 
+      const authRecord = req.authContext?.record ?? null
+      const isAdmin = req.authContext?.isAdmin ?? false
+
+      const subscribedChannels: string[] = []
+      const errors: { channel: string; message: string }[] = []
+
       for (const sub of subscriptions) {
         if (sub.action === 'subscribe') {
-          broker.subscribe(clientId, sub.channel)
+          const allowed = await canSubscribeToChannel(app, sub.channel, authRecord, isAdmin)
+          if (allowed) {
+            broker.subscribe(clientId, sub.channel)
+            subscribedChannels.push(sub.channel)
+          } else {
+            errors.push({ channel: sub.channel, message: `Not authorized to subscribe to channel: ${sub.channel}` })
+          }
         } else if (sub.action === 'unsubscribe') {
           broker.unsubscribe(clientId, sub.channel)
         }
       }
 
+      if (errors.length > 0 && subscribedChannels.length === 0) {
+        return res.status(403).json({
+          code: 403,
+          clientId,
+          message: 'Subscription denied.',
+          errors,
+        })
+      }
+
       res.json({
         code: 200,
         clientId,
-        subscriptions: subscriptions.map((s: any) => s.channel),
+        subscriptions: subscribedChannels,
+        ...(errors.length > 0 ? { errors } : {}),
       })
     } catch (err: any) {
       app.logger().error(err.message || err)
       res.status(500).json({ code: 500, message: 'Internal server error' })
     }
   })
+}
+
+
+async function canSubscribeToChannel(
+  app: BaseApp,
+  channel: string,
+  authRecord: PBRecord | null,
+  isAdmin: boolean
+): Promise<boolean> {
+
+  if (isAdmin) return true
+
+  if (channel.startsWith('collections.') && channel.endsWith('.records')) {
+    const collectionId = channel.replace('collections.', '').replace('.records', '')
+    try {
+      const collection = app.findCachedCollectionByNameOrId(collectionId)
+      if (!collection) return false
+      if (collection.viewRule === null) return false
+      if (collection.viewRule === '') return true
+
+      if (!authRecord) return false
+      const requestInfo: RequestInfo = {
+        auth: authRecord, isAdmin: false, method: 'GET',
+        headers: {}, query: {}, body: {}, data: {}, context: 'view',
+      }
+      const resolver = new RecordFieldResolver({
+        app, record: authRecord, collection, requestInfo,
+      })
+      const { evaluateRule } = require('../core/record_field_resolver')
+      return evaluateRule(collection.viewRule, resolver)
+    } catch {
+      return false
+    }
+  }
+
+  return !!(authRecord || isAdmin)
 }
 
 export function setupWebSocketRealtime(wss: any, app?: BaseApp): void {
