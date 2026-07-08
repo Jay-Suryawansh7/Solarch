@@ -46,6 +46,7 @@ export class RecordUpsertForm {
       'lastVerifiedAt',
       'mfaEnabled',
       'mfaSecret',
+      'passwordHash',
     ]
 
     const sanitized: Record<string, any> = {}
@@ -225,13 +226,6 @@ export class RecordUpsertForm {
     }
 
     const record = new PBRecord(this.collection.id, this.collection.name, recordData)
-
-    if (this.data.password) {
-      record.set('passwordHash', this.data.password)
-    }
-    if (this.data.newPassword) {
-      record.set('passwordHash', this.data.newPassword)
-    }
 
     if (!this.record && this.collection.isAuth()) {
       record.set('emailVisibility', this.data.emailVisibility ?? true)

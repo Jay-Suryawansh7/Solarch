@@ -118,7 +118,20 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
         return res.status(403).json({ code: 403, message: 'Email not verified.' })
       }
 
+      const mfaCheck = db.prepare(`SELECT id, method FROM _mfas WHERE recordRef = ? AND collectionId = ?`).get(row.id, collection.id) as any
+      if (mfaCheck) {
+        const mfaToken = app.generateJWT(
+          { id: row.id, type: 'mfa', collectionId: collection.id, mfaId: mfaCheck.id },
+          app.getJwtSecret(),
+          '5m'
+        )
+        return res.json({ mfaRequired: true, mfaId: mfaCheck.id, token: mfaToken })
+      }
+
       const record = new PBRecord(collection.id, collection.name, row)
+      record.hide('passwordHash')
+      record.hide('lastResetSentAt')
+      record.hide('lastVerificationSentAt')
       const token = app.generateJWT(
         { id: record.id, type: 'auth', collectionId: collection.id },
         app.getJwtSecret(),
@@ -238,7 +251,9 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
         app.getJwtSecret(),
         '720h'
       )
-
+      record.hide('passwordHash')
+      record.hide('lastResetSentAt')
+      record.hide('lastVerificationSentAt')
       res.json({ token, record: record.toJSON(), meta: { isNew: !existingAuth } })
     } catch (err: any) {
       app.logger().error(err.message || err)
@@ -289,6 +304,9 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
       db.prepare(`DELETE FROM _otps WHERE id = ?`).run(otpId)
       db.prepare(`UPDATE ${quoteIdentifier(`_r_${collection.id}`)} SET lastLoginAt = ? WHERE id = ?`).run(new Date().toISOString(), record.id)
 
+      record.hide('passwordHash')
+      record.hide('lastResetSentAt')
+      record.hide('lastVerificationSentAt')
       res.json({ token, record: record.toJSON() })
     } catch (err: any) {
       app.logger().error(err.message || err)
@@ -434,7 +452,7 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
 
       const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader
       const payload = app.parseJWT(token, app.getJwtSecret())
-      if (!payload || payload.type !== 'auth') {
+      if (!payload || !['auth', 'mfa'].includes(payload.type)) {
         return res.status(401).json({ code: 401, message: 'Invalid token.' })
       }
 
@@ -452,6 +470,24 @@ export function registerAuthRoutes(app: BaseApp, router: Router): void {
       const expectedCode = generateTOTPCode(mfaRow.secret || mfaRow.id)
       if (code !== expectedCode) {
         return res.status(400).json({ code: 400, message: 'Invalid MFA code.' })
+      }
+
+      if (payload.type === 'mfa') {
+        const recordRow = db.prepare(`SELECT * FROM ${quoteIdentifier(`_r_${collection.id}`)} WHERE id = ?`).get(payload.id) as any
+        if (!recordRow) {
+          return res.status(404).json({ code: 404, message: 'Record not found.' })
+        }
+        const record = new PBRecord(collection.id, collection.name, recordRow)
+        record.hide('passwordHash')
+        record.hide('lastResetSentAt')
+        record.hide('lastVerificationSentAt')
+        const authToken = app.generateJWT(
+          { id: payload.id, type: 'auth', collectionId: collection.id },
+          app.getJwtSecret(),
+          '720h'
+        )
+        db.prepare(`UPDATE ${quoteIdentifier(`_r_${collection.id}`)} SET lastLoginAt = ? WHERE id = ?`).run(new Date().toISOString(), payload.id)
+        return res.json({ verified: true, token: authToken, record: record.toJSON() })
       }
 
       res.json({ verified: true })

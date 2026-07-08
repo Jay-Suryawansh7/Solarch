@@ -7,7 +7,6 @@ import { Mailer } from '../tools/mailer/mailer'
 import { EmailTemplateEngine, sendPasswordResetEmail, sendVerificationEmail, sendEmailChangeConfirmation } from '../tools/mailer/templates'
 import rateLimit from 'express-rate-limit'
 
-// FIXED[H-2]: Rate limiters for auth flow endpoints
 const authFlowRequestLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
@@ -32,8 +31,6 @@ const authFlowConfirmLimiter = rateLimit({
 
 export function registerPasswordResetRoutes(app: BaseApp, router: Router): void {
   const authRouter = Router({ mergeParams: true })
-
-  // FIXED[H-2]: Added rate limiting
   authRouter.post('/request-password-reset', authFlowRequestLimiter, async (req: Request, res: Response) => {
     try {
       const { email } = req.body
@@ -56,13 +53,11 @@ export function registerPasswordResetRoutes(app: BaseApp, router: Router): void 
       const now = new Date().toISOString()
       db.prepare(`UPDATE _r_${collection.id} SET lastResetSentAt = ? WHERE id = ?`).run(now, record.id)
 
-      // Send email if SMTP is configured
       try {
         const settings = app.settings()
         if (settings.smtp.host) {
           const mailer = Mailer.fromSettings(settings)
           const engine = new EmailTemplateEngine(settings)
-          // FIXED[L-1]: Set Referrer-Policy to no-referrer to prevent token leakage via Referer header
           res.setHeader('Referrer-Policy', 'no-referrer')
           await sendPasswordResetEmail(mailer, engine, email, {
             resetURL: `${settings.appURL}/_/#/auth/confirm-password-reset?token=${token}`,
@@ -80,7 +75,7 @@ export function registerPasswordResetRoutes(app: BaseApp, router: Router): void 
     }
   })
 
-  // FIXED[H-2]: Added rate limiting
+
   authRouter.post('/confirm-password-reset', authFlowConfirmLimiter, async (req: Request, res: Response) => {
     try {
       const { token, password, passwordConfirm } = req.body
@@ -93,6 +88,11 @@ export function registerPasswordResetRoutes(app: BaseApp, router: Router): void 
       const collection = await app.findCollectionByNameOrId(collectionIdOrName)
       if (!collection || !collection.isAuth()) {
         return res.status(400).json({ code: 400, message: 'Invalid collection.' })
+      }
+
+      const minLength = collection.authOptions?.minPasswordLength ?? 8
+      if (!password || password.length < minLength) {
+        return res.status(400).json({ code: 400, message: `Password must be at least ${minLength} characters.` })
       }
 
       const tokenType = `collection_${collection.id}`
@@ -128,8 +128,6 @@ export function registerPasswordResetRoutes(app: BaseApp, router: Router): void 
 
 export function registerVerificationRoutes(app: BaseApp, router: Router): void {
   const authRouter = Router({ mergeParams: true })
-
-  // FIXED[H-2]: Added rate limiting
   authRouter.post('/request-verification', authFlowRequestLimiter, async (req: Request, res: Response) => {
     try {
       const { email } = req.body
@@ -156,7 +154,6 @@ export function registerVerificationRoutes(app: BaseApp, router: Router): void {
       const now = new Date().toISOString()
       db.prepare(`UPDATE _r_${collection.id} SET lastVerificationSentAt = ? WHERE id = ?`).run(now, record.id)
 
-      // Send email if SMTP is configured
       try {
         const settings = app.settings()
         if (settings.smtp.host) {
@@ -178,7 +175,6 @@ export function registerVerificationRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // FIXED[H-2]: Added rate limiting
   authRouter.post('/confirm-verification', authFlowConfirmLimiter, async (req: Request, res: Response) => {
     try {
       const { token } = req.body
@@ -215,7 +211,6 @@ export function registerVerificationRoutes(app: BaseApp, router: Router): void {
 export function registerEmailChangeRoutes(app: BaseApp, router: Router): void {
   const authRouter = Router({ mergeParams: true })
 
-  // FIXED[H-2]: Added rate limiting
   authRouter.post('/request-email-change', authFlowRequestLimiter, async (req: Request, res: Response) => {
     try {
       const { newEmail } = req.body
@@ -226,7 +221,6 @@ export function registerEmailChangeRoutes(app: BaseApp, router: Router): void {
         return res.status(400).json({ code: 400, message: 'Invalid collection.' })
       }
 
-      // Require auth
       const authHeader = req.headers.authorization
       if (!authHeader) {
         return res.status(401).json({ code: 401, message: 'Authentication required.' })
@@ -250,8 +244,6 @@ export function registerEmailChangeRoutes(app: BaseApp, router: Router): void {
         app.getJwtSecret(),
         '2h'
       )
-
-      // Send email if SMTP is configured
       try {
         const settings = app.settings()
         if (settings.smtp.host) {
@@ -273,7 +265,6 @@ export function registerEmailChangeRoutes(app: BaseApp, router: Router): void {
     }
   })
 
-  // FIXED[H-2]: Added rate limiting
   authRouter.post('/confirm-email-change', authFlowConfirmLimiter, async (req: Request, res: Response) => {
     try {
       const { token } = req.body
@@ -295,6 +286,10 @@ export function registerEmailChangeRoutes(app: BaseApp, router: Router): void {
         return res.status(400).json({ code: 400, message: 'Invalid token.' })
       }
 
+      const existingEmail = db.prepare(`SELECT id FROM _r_${collection.id} WHERE email = ? AND id != ?`).get(payload.newEmail, payload.id) as any
+      if (existingEmail) {
+        return res.status(400).json({ code: 400, message: 'Email is already in use.' })
+      }
       db.prepare(`UPDATE _r_${collection.id} SET email = ? WHERE id = ?`).run(payload.newEmail, payload.id)
 
       res.json({ code: 200, message: 'Email changed successfully.' })
@@ -312,7 +307,6 @@ export function registerImpersonateRoutes(app: BaseApp, router: Router): void {
 
   authRouter.post('/impersonate/:recordId', async (req: Request, res: Response) => {
     try {
-      // Only superusers can impersonate
       if (!req.authContext?.isAdmin) {
         return res.status(403).json({ code: 403, message: 'Only superusers can impersonate.' })
       }
@@ -332,6 +326,9 @@ export function registerImpersonateRoutes(app: BaseApp, router: Router): void {
       }
 
       const record = new PBRecord(collection.id, collection.name, row)
+      record.hide('passwordHash')
+      record.hide('lastResetSentAt')
+      record.hide('lastVerificationSentAt')
       const token = app.generateJWT(
         { id: record.id, type: 'auth', collectionId: collection.id },
         app.getJwtSecret(),
