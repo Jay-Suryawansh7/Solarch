@@ -72,3 +72,10 @@ torque/out/
 torque/next-env.d.ts
 torque/node_modules/
 .qa
+
+# Docs build output
+public_site/solarch-docs/dist/
+public_site/graphify-out/
+
+# Vercel deployment metadata
+**/.vercel/
