@@ -448,7 +448,7 @@ export default defineCollection({
       <DocSection id="changelog" title="Changelog">
         <div className="space-y-6">
           <div className="rounded-lg border border-theme bg-theme-surface p-4">
-            <h3 className="font-heading text-lg font-bold text-theme">v0.14.0</h3>
+            <h3 className="font-heading text-lg font-bold text-theme">v0.15.0</h3>
             <p className="mt-1 text-xs text-theme-muted">2026-05-14</p>
             <h4 className="mt-3 text-sm font-semibold text-green-400">Performance &amp; Security Hardening</h4>
             <ul className="mt-1 list-inside list-disc space-y-1 text-sm text-theme-secondary">

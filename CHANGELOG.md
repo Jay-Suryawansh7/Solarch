@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.16.0 — Deprecate Torque & Agent Workflow System (2026-07-14)
+
+### Breaking Changes
+
+- **Removed `torque/` directory** — The Torque visual workflow editor (Next.js app with Clerk auth, reactflow, zustand) has been fully removed from the monorepo. It was a separate product with zero shared code, its own dependency tree, and a leaked Clerk secret key in `.env.local`.
+- **Removed `/api/agents/*` endpoints** — All agent/workflow REST API routes have been removed:
+  - `GET /api/agents/nodes` — list node types
+  - `GET /api/agents/nodes/:type` — get node definition
+  - `POST /api/agents/workflows/register` — register workflow
+  - `GET /api/agents/workflows` — list workflows
+  - `GET /api/agents/workflows/:id` — get workflow
+  - `DELETE /api/agents/workflows/:id` — delete workflow
+  - `POST /api/agents/workflows/:id/execute` — execute workflow
+  - `GET /api/agents/workflows/:id/execute/stream` — SSE execution stream
+  - `GET /api/agents/workflows/:id/executions` — execution history
+  - `GET /api/agents/executions/:id` — execution detail
+- **Removed `src/agent/` module** — `node-registry.ts`, `workflow-engine.ts`, `types.ts` deleted.
+- **Removed `_agentWorkflows` and `_agentExecutions` database tables** from schema initialization.
+
+### Net Impact
+
+- −5,141 lines of code
+- −34 files removed
+- −250KB `package-lock.json` (torque dependencies)
+- Eliminates leaked `CLERK_SECRET_KEY` from git history
+
 ## v0.15.0 — Critical Regression Fixes + Security Hardening (2026-05-14)
 
 ### Regressions Addressed

@@ -564,38 +564,6 @@ export class BaseApp {
       )
     `)
 
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS _agentWorkflows (
-        id TEXT PRIMARY KEY,
-        workflowId TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        definition TEXT NOT NULL,
-        version TEXT DEFAULT '1',
-        enabled INTEGER DEFAULT 1,
-        created TEXT NOT NULL,
-        updated TEXT NOT NULL
-      )
-    `)
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS _agentExecutions (
-        id TEXT PRIMARY KEY,
-        workflowId TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        trigger TEXT DEFAULT 'manual',
-        input TEXT DEFAULT '{}',
-        output TEXT DEFAULT 'null',
-        results TEXT DEFAULT '[]',
-        duration REAL DEFAULT 0,
-        error TEXT DEFAULT '',
-        created TEXT NOT NULL
-      )
-    `)
-
-    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN description TEXT DEFAULT \'\'') } catch { }
-    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN version TEXT DEFAULT \'1\'') } catch { }
-    try { db.exec('ALTER TABLE _agentWorkflows ADD COLUMN enabled INTEGER DEFAULT 1') } catch { }
 
     // FIXED[N-5]: Add data column to _passwordResetTokens for storing opaque token metadata
     try { db.exec('ALTER TABLE _passwordResetTokens ADD COLUMN data TEXT DEFAULT \'\'') } catch {}
