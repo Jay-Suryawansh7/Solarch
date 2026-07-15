@@ -25,7 +25,7 @@
 <p align="center">
   <a href="https://solarch-docs.vercel.app/">Website</a> •
   <a href="https://www.npmjs.com/package/solarch">npm</a> •
-  <a href="https://github.com/Jay-Suryawansh7/solarch">GitHub</a> •
+  <a href="https://github.com/xvertere-org/Solarch">GitHub</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#api-reference">API Reference</a>
 </p>
@@ -946,7 +946,7 @@ src/
 
 ```bash
 # Clone
-git clone https://github.com/Jay-Suryawansh7/solarch.git
+git clone https://github.com/xvertere-org/Solarch.git
 cd solarch
 
 # Install dependencies

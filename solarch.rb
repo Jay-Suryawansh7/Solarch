@@ -1,6 +1,6 @@
 class Solarch < Formula
   desc "TypeScript backend-as-a-service with SQLite, auth, realtime, and admin UI"
-  homepage "https://github.com/Jay-Suryawansh7/Solarch"
+  homepage "https://github.com/xvertere-org/Solarch"
   url "https://registry.npmjs.org/solarch/-/solarch-0.15.0.tgz"
   sha256 "REPLACE_WITH_SHA256"
   license "Apache-2.0"

@@ -40,7 +40,7 @@ jobs:
           node -e "
             const fs=require('fs');
             const p=JSON.parse(fs.readFileSync('package.json','utf8'));
-            p.name='@jay-suryawansh7/solarch';
+            p.name='@xvertere-org/solarch';
             p.publishConfig={registry:'https://npm.pkg.github.com'};
             fs.writeFileSync('package.json',JSON.stringify(p,null,2));
           "
@@ -67,7 +67,7 @@ jobs:
           SHA256=$(sha256sum solarch.tgz | awk '{print $1}')
           
           # Clone the homebrew-tap repo
-          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/Jay-Suryawansh7/homebrew-tap.git
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/xvertere-org/homebrew-tap.git
           cd homebrew-tap
           
           mkdir -p Formula
@@ -75,7 +75,7 @@ jobs:
           cat <<EOF > Formula/solarch.rb
           class Solarch < Formula
             desc "TypeScript backend-as-a-service with SQLite, auth, realtime, and admin UI"
-            homepage "https://github.com/Jay-Suryawansh7/Solarch"
+            homepage "https://github.com/xvertere-org/Solarch"
             url "${TARBALL_URL}"
             sha256 "${SHA256}"
             license "Apache-2.0"

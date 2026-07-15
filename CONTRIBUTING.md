@@ -67,14 +67,14 @@ src/
 ### Reporting Bugs
 
 Before creating a bug report, please:
-1. Check the [existing issues](https://github.com/Jay-Suryawansh7/solarch/issues) to avoid duplicates
-2. Use the [Bug Report template](https://github.com/Jay-Suryawansh7/solarch/issues/new?template=bug_report.yml)
+1. Check the [existing issues](https://github.com/xvertere-org/Solarch/issues) to avoid duplicates
+2. Use the [Bug Report template](https://github.com/xvertere-org/Solarch/issues/new?template=bug_report.yml)
 3. Include as much detail as possible (steps to reproduce, environment, logs)
 
 ### Suggesting Features
 
 1. Check if the feature has already been requested
-2. Use the [Feature Request template](https://github.com/Jay-Suryawansh7/solarch/issues/new?template=feature_request.yml)
+2. Use the [Feature Request template](https://github.com/xvertere-org/Solarch/issues/new?template=feature_request.yml)
 3. Explain the use case and why it would be valuable
 
 ### Contributing Code
@@ -191,7 +191,7 @@ Releases are managed by maintainers:
 
 ## Questions?
 
-- Open a [GitHub Discussion](https://github.com/Jay-Suryawansh7/solarch/discussions)
+- Open a [GitHub Discussion](https://github.com/xvertere-org/Solarch/discussions)
 - Check the [Documentation](https://solarch-docs.vercel.app/)
 
 Thank you for contributing!
