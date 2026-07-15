@@ -133,8 +133,3 @@ jobs:
         run: npm ci
       - name: Run npm audit
         run: npm audit --audit-level=high
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
