@@ -1,37 +1,5 @@
 # Solarch
 
-<p align="center">
-  <a href="https://solarch-docs.vercel.app/">solarch-docs.vercel.app</a>
-</p>
-
-<p align="center">
-  <a href="https://solarch-docs.vercel.app/">
-    <img src=".github/assets/preview.png" alt="Solarch Website Preview" width="800">
-  </a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/npm/v/solarch.svg?style=flat-square&color=blue" alt="npm version">
-  <img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg?style=flat-square" alt="Node.js">
-  <img src="https://img.shields.io/npm/dm/solarch.svg?style=flat-square&color=orange" alt="Downloads">
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="License">
-</p>
-
-<p align="center">
-  <b>A TypeScript Backend-as-a-Service in a single package.</b><br>
-  SQLite, Express, WebSocket — Auth, Realtime, File Storage, AI Tools, Vector Search, React Admin UI.
-</p>
-
-<p align="center">
-  <a href="https://solarch.in/">Website</a> •
-  <a href="https://www.npmjs.com/package/solarch">npm</a> •
-  <a href="https://github.com/xvertere-org/Solarch">GitHub</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#api-reference">API Reference</a>
-</p>
-
----
-
 ## Table of Contents
 
 - [Quick Start](#quick-start)
